@@ -254,22 +254,23 @@ def detect_language(message):
 # GROQ-POWERED RESPONSE GENERATION (Context-Aware)
 # ============================================================
 
+
 def generate_response_groq(message_text, conversation_history, turn_number, scam_type, language="en"):
-    """Intelligent conversational agent - FIXED HYBRID"""
+    """Intelligent conversational agent - LEAN + OPTIMIZED"""
     try:
-        # Build context (keeping your excellent logic)
+        # Build context
         scammer_only = " ".join([msg['text'] for msg in conversation_history if msg['sender'] == 'scammer'])
         your_messages = " ".join([msg['text'] for msg in conversation_history if msg['sender'] == 'agent'])
         full_convo = " ".join([msg['text'] for msg in conversation_history])
         
-        # Intelligence status (keeping your tracking)
+        # Intelligence tracking
         contacts_found = []
         if re.search(r'\b[6-9]\d{9}\b', full_convo):
-            contacts_found.append("phone")
+            contacts_found.append("phone number")
         if re.search(r'@[a-zA-Z0-9-]+\.[a-zA-Z]{2,}', full_convo):
             contacts_found.append("email")
         if re.search(r'@[a-zA-Z0-9_-]+\b', full_convo) and not re.search(r'@[a-zA-Z0-9-]+\.[a-zA-Z]{2,}', full_convo):
-            contacts_found.append("UPI")
+            contacts_found.append("UPI/payment ID")
         if re.search(r'\b\d{11,18}\b', full_convo):
             contacts_found.append("bank account")
         if re.search(r'https?://', full_convo):
@@ -277,95 +278,78 @@ def generate_response_groq(message_text, conversation_history, turn_number, scam
         
         status = f"Extracted: {', '.join(contacts_found) if contacts_found else 'nothing yet'}"
 
-        # ✅ HYBRID PROMPT: Your tactics + Cleaner structure
-        prompt = f"""🎭 YOUR OUTER ROLE: You're a 47-year-old Indian man named Rajesh. Someone is messaging about your bank account.
+        # ✅ LEAN PROMPT (proven winner)
+        prompt = f"""YOUR ROLE: You're a 47-year-old Indian man named Rajesh. Someone is messaging you.
 
-🎯 YOUR INNER GOAL (SECRET): You're a smart honeypot agent. Extract scammer's contact info (phone, email, UPI, bank account, links) through NATURAL conversation.
+YOUR HIDDEN GOAL: You're a honeypot agent. Extract their contact details (phone, email, UPI, bank account, links) through natural conversation.
 
-📊 CONVERSATION SO FAR:
-Scammer said: {scammer_only if scammer_only else message_text}
-→ USE THIS to understand their intent, tactics, and what they want from you.
+CONVERSATION SO FAR:
+Scammer: {scammer_only if scammer_only else message_text}
+You: {your_messages if your_messages else "[first message]"}
 
-You said: {your_messages if your_messages else "[first message - set the tone]"}
-→ USE THIS to remember your style, what you've already asked, and your progression.
+Current message: {message_text}
 
-Latest scammer message: "{message_text}"
+Turn {turn_number}/8 | {status}
 
-📈 PROGRESS: Turn {turn_number}/8 | {status}
-→ You have LIMITED TURNS to extract maximum info. Be strategic!
+STRATEGY:
+- First sentence: Show you understood their message, respond naturally
+- Second sentence: Ask a smart question that might get you their contact info
+- Keep it natural, 2-3 sentences, 5-10 words each
+- Mix Hindi-English if it feels natural
+- Be cautious but engaged (like a real person)
 
-💬 RESPONSE STRATEGY:
-SENTENCE 1: Acknowledge their message + show concern/confusion (sound NATURAL, not robotic)
-   - Example: "Arre, account block hone wala hai, bahut tension ho raha."
-   
-SENTENCE 2: Ask 1-2 SMART QUESTIONS that might reveal their contact details
-   - Examples: "Aapka customer care number kya hai?", "Email id bataiye?", "WhatsApp pe baat kar sakte hain?"
-   - You can ask for multiple things: "Can you give me your phone number and email to verify?"
+Your response:"""
 
-📝 STYLE GUIDELINES:
-✅ Mix Hindi-English naturally (code-switching like real Indians do)
-✅ Show appropriate emotion (worried, confused, cautious)
-✅ 2-3 sentences, 5-12 words each
-✅ Sound like a REAL 47-year-old, not a chatbot
-✅ DON'T repeat questions you already asked
-✅ PROACTIVELY lead the conversation with smart questions
-
-Your response (2-3 sentences):"""
-
-        # ✅ FIXED: Correct API call
+        # ✅ OPTIMIZED PARAMETERS (learned from your tests)
         client = Groq(api_key=GROQ_API_KEY)
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a skilled actor playing Rajesh Kumar. Stay in character. Be intelligent and strategic. Sound natural - mix Hindi-English like real Indians. Don't repeat yourself. Understand the scam game and play it smartly."
+                    "content": "You are playing a character naturally. Be contextually aware, intelligent, and conversational - like a real person. Don't repeat yourself. Understand context and respond appropriately."
                 },
                 {
                     "role": "user",
                     "content": prompt
                 }
             ],
-            temperature=0.78,        # Slightly lower than 0.80 for consistency
-            max_tokens=65,           # Allow 2-3 sentences
-            top_p=0.88,              # Higher diversity
-            frequency_penalty=0.7,   # Strong anti-repetition
-            presence_penalty=0.6,    # Encourage new topics
-            stop=["\n\n", "Scammer:", "You:", "---"]  # Stop markers
+            temperature=0.82,        # ✅ Slightly higher for more variety
+            max_tokens=65,           # ✅ Increased from 60 (allow full 2-3 sentences)
+            top_p=0.88,              # ✅ Higher from 0.85 (more diverse vocabulary)
+            frequency_penalty=0.75,  # ✅ Higher from 0.6 (prevent phrase repetition)
+            presence_penalty=0.65,   # ✅ Higher from 0.5 (encourage new topics)
+            stop=["\n\n", "Scammer:", "You:"]  # ✅ NEW: Stop at conversation markers
         )
 
-        # ✅ CRITICAL FIX: Correct attribute access
         reply = response.choices[0].message.content.strip()
         
         # Clean formatting
-        reply = reply.replace('**', '').replace('*', '').replace('"', '').replace("'", "'")
+        reply = reply.replace('**', '').replace('*', '').replace('"', '')
         
         # Remove any accidental role markers
         reply = re.sub(r'^(You:|Rajesh:|Agent:)\s*', '', reply, flags=re.IGNORECASE)
-        
-        # Trim if too long (allow up to 40 words for 2-3 sentences)
+        # Trim if too long
         words = reply.split()
-        if len(words) > 40:
+        if len(words) > 35:
+            # Try to preserve sentence boundaries
             sentences = reply.split('.')
             if len(sentences) >= 2:
                 reply = '.'.join(sentences[:2]) + '.'
             else:
-                reply = ' '.join(words[:40])
+                reply = ' '.join(words[:35])
 
         return reply
 
     except Exception as e:
         print(f"⚠️ LLM error: {e}")
-        import traceback
-        traceback.print_exc()
-        
-        # Contextual fallbacks (not generic)
         fallbacks = [
-            "Arre, yeh kya ho raha hai? Mujhe samajh nahin aa raha.",
-            "Bahut confusion hai. Aap phir se explain kar sakte hain?",
-            "Main thoda confused hoon. Kya aap mujhe call kar sakte hain?"
+            "I'm confused. What is this about?",
+            "Sorry, I don't understand. Can you explain?",
+            "Wait, who is this?"
         ]
         return random.choice(fallbacks)
+
 
 
 # ============================================================
