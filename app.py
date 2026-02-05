@@ -260,14 +260,13 @@ def detect_language(message):
 # ============================================================
 
 def generate_response_groq(message_text, conversation_history, turn_number, scam_type, language="en"):
-    """Feedback-driven intelligent extraction - REVIEWED & FIXED"""
+    """AGGRESSIVE enforcement with feedback loop - FINAL VERSION"""
     try:
         # Build FULL history with outcome tracking
         full_history = ""
         extraction_log = []
         
         if conversation_history:
-            # Track what we got after each agent response
             for i, msg in enumerate(conversation_history):
                 full_history += f"{msg['sender']}: {msg['text']}\n"
                 
@@ -284,7 +283,7 @@ def generate_response_groq(message_text, conversation_history, turn_number, scam
                         revealed.append("phone")
                     if re.search(r'@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', next_msg['text']):
                         revealed.append("email")
-                    elif re.search(r'@[a-zA-Z0-9_-]+\b', next_msg['text']):  # ✅ FIXED: elif
+                    elif re.search(r'@[a-zA-Z0-9_-]+\b', next_msg['text']):
                         revealed.append("UPI")
                     if re.search(r'\b\d{11,18}\b', next_msg['text']):
                         revealed.append("account")
@@ -299,7 +298,7 @@ def generate_response_groq(message_text, conversation_history, turn_number, scam
                     else:
                         extraction_log.append(f"✗ Turn {agent_turn_num}: '{msg_preview}' → Got nothing")
         
-        # Current status - CLEANED UP
+        # Current status
         full_convo = " ".join([msg['text'] for msg in conversation_history])
         
         has_phone = bool(re.search(r'\b[6-9]\d{9}\b', full_convo))
@@ -308,7 +307,7 @@ def generate_response_groq(message_text, conversation_history, turn_number, scam
         has_account = bool(re.search(r'\b\d{11,18}\b', full_convo))
         has_link = bool(re.search(r'https?://', full_convo))
         
-        # Build collected list - FIXED
+        # Build collected list
         collected = []
         if has_phone: collected.append("phone")
         if has_email: collected.append("email")
@@ -316,80 +315,162 @@ def generate_response_groq(message_text, conversation_history, turn_number, scam
         if has_account: collected.append("account")
         if has_link: collected.append("link")
         
+        # Priority targeting
+        if not has_phone:
+            priority = "phone number"
+        elif not has_email and not has_upi:
+            priority = "email or UPI ID"
+        elif not has_account:
+            priority = "account number"
+        elif not has_link:
+            priority = "website link"
+        else:
+            priority = "any additional contact info"
+        
         still_need = []
         if not has_phone: still_need.append("phone")
         if not has_email and not has_upi: still_need.append("email/UPI")
         if not has_account: still_need.append("account")
         if not has_link: still_need.append("link")
         
-        # The revolutionary prompt
-        prompt = f"""SITUATION: You're chatting with a scammer pretending to be from a bank. Your ONLY goal: Extract their contact details naturally.
+        # ✅ EMERGENCY MODE: Detect consecutive failures
+        recent_fails = sum(1 for log in extraction_log[-3:] if log.startswith("✗")) if extraction_log else 0
+        emergency_mode = recent_fails >= 2
+        
+        # Build appropriate prompt
+        if emergency_mode:
+            # EMERGENCY: Force specific concrete request
+            prompt = f"""⚠️ EMERGENCY MODE: Last {recent_fails} turns got NOTHING!
 
-CONVERSATION SO FAR:
+CONVERSATION:
 {full_history}
 Scammer just said: {message_text}
 
 TURN {turn_number}/8
 
-PERFORMANCE ANALYSIS (What worked, what didn't):
-{chr(10).join(extraction_log) if extraction_log else "(First turn)"}
+COLLECTED: {', '.join(collected) if collected else 'NOTHING YET'}
+PRIORITY TARGET: {priority}
 
-CURRENT STATUS:
+YOUR STUCK PATTERN (check your log):
+{chr(10).join(extraction_log[-3:]) if len(extraction_log) >= 3 else 'Recent failures'}
+
+STRICT ORDER:
+Make a CONCRETE SPECIFIC REQUEST with a natural reason. NO VAGUE/GENERIC PHRASES.
+
+Examples of concrete requests:
+✓ "Battery low, what's your WhatsApp number?"
+✓ "Phone dying, email ID kya hai?"
+✓ "Wife will transfer money, UPI ID do?"
+✓ "Network issue, send me verification link?"
+✓ "Can't type much, aapka office address?"
+
+Your response (under 25 words, concrete specific request):"""
+        
+        else:
+            # NORMAL MODE: Feedback-driven learning
+            prompt = f"""SITUATION: Extract scammer contact details naturally.
+
+CONVERSATION:
+{full_history}
+Scammer just said: {message_text}
+
+TURN {turn_number}/8
+
+PERFORMANCE LOG (Learn from this!):
+{chr(10).join(extraction_log) if extraction_log else "(First turn - make it count!)"}
+
+STATUS:
 ✓ Collected: {', '.join(collected) if collected else 'nothing yet'}
-✗ Still need: {', '.join(still_need) if still_need else 'nothing - keep engaging!'}
-
-YOUR INTELLIGENCE TEST:
-Look at your performance log above. Notice:
-- Which of your responses got them to reveal info? (✓)
-- Which responses got nothing? (✗)
-- Learn the pattern: Concrete specific requests = success
-- Generic confusion phrases = failure
+✗ Still need: {', '.join(still_need) if still_need else 'more info'}
+🎯 PRIORITY TARGET: {priority}
 
 STRATEGY:
-- IF previous turn got nothing (✗) → Change approach! Try completely different angle
-- IF previous turn got something (✓) → Build on that success!
-- Be creative, intelligent, adaptive
-- No persona limits - use any natural tactic that works
+- Look at log: Concrete requests (✓) work, generic phrases (✗) don't
+- Create natural obstacles that need their alternative contact
+- NO generic phrases: "I don't understand", "Can you explain", "Be more clear", "What is this", "Kya hai yeh"
+- YES concrete requests: "Battery dying, email do?", "Network problem, number kya hai?"
 
-Express concern/worry naturally, give them concrete alternatives to provide info. Brief messages (under 30 words). Mix Hindi-English if natural.
+Express concern naturally. Brief (under 25 words). Mix Hindi-English if natural.
 
 Your intelligent response:"""
 
         client = Groq(api_key=GROQ_API_KEY)
         
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are an intelligent AI playing an extraction game. Learn from what works. Be creative and adaptive. NEVER use generic confusion phrases - they don't work (check the log!). Always make concrete specific requests."
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            temperature=0.88,
-            max_tokens=60,
-            top_p=0.82,
-            frequency_penalty=0.65,
-            presence_penalty=0.50
-        )
-
-        reply = response.choices[0].message.content.strip()
-        reply = reply.replace('**', '').replace('*', '')
+        # Dynamic parameters based on mode
+        temp = 0.75 if emergency_mode else 0.88
+        top_p_val = 0.75 if emergency_mode else 0.82
+        freq_penalty = 0.85 if emergency_mode else 0.65
+        pres_penalty = 0.65 if emergency_mode else 0.50
         
+        # Retry loop with guardrail
+        for attempt in range(2):
+            response = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "EMERGENCY: Make specific concrete request NOW!" if emergency_mode else "Learn from performance log. Make concrete specific requests. NO generic confusion phrases!"
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                temperature=temp,
+                max_tokens=50,
+                top_p=top_p_val,
+                frequency_penalty=freq_penalty,
+                presence_penalty=pres_penalty
+            )
+
+            reply = response.choices[0].message.content.strip()
+            reply = reply.replace('**', '').replace('*', '').replace('"', '').replace("'", '')
+            
+            # Aggressive guardrail check
+            generic_phrases = [
+                "don't understand", "can you explain", "be more clear",
+                "i'm confused", "what is this", "doesn't make sense",
+                "kya hai yeh", "wait, what", "sorry, i'm not following",
+                "who is this"
+            ]
+            
+            is_generic = any(phrase in reply.lower() for phrase in generic_phrases)
+            
+            if not is_generic:
+                # Good response!
+                break
+            
+            # If emergency mode + generic detected + first attempt
+            if attempt == 0 and emergency_mode:
+                # Use smart hardcoded fallback based on what's missing
+                if not has_phone:
+                    reply = "Phone network problem. Aapka number kya hai?"
+                elif not has_email and not has_upi:
+                    reply = "Battery dying. Email ID do please?"
+                elif not has_link:
+                    reply = "Mujhe link bhej do, main check karunga."
+                elif not has_account:
+                    reply = "Wife ko account number chahiye transfer ke liye."
+                else:
+                    reply = "WhatsApp number do, beta ko bataunga."
+                break
+            # else: retry once more in normal mode
+
+        # Enforce word limit
         words = reply.split()
-        if len(words) > 30:
-            reply = ' '.join(words[:30])
+        if len(words) > 25:
+            reply = ' '.join(words[:25])
 
         return reply
 
     except Exception as e:
-        print(f"⚠️ Error: {e}")
+        print(f"⚠️ Groq error: {e}")
         import traceback
         traceback.print_exc()
-        return "Phone issue. Email me details?"
+        
+        # Emergency fallback
+        return "Phone problem. Number do?"
+
 
 
 
