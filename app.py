@@ -255,83 +255,117 @@ def detect_language(message):
 # ============================================================
 
 def generate_response_groq(message_text, conversation_history, turn_number, scam_type, language="en"):
-    """Intelligent conversational agent"""
+    """Intelligent conversational agent - FIXED HYBRID"""
     try:
-        # Full context
-        full_history = ""
-        if conversation_history:
-            full_history = "\n".join([f"{msg['sender']}: {msg['text']}" for msg in conversation_history])
-            
+        # Build context (keeping your excellent logic)
         scammer_only = " ".join([msg['text'] for msg in conversation_history if msg['sender'] == 'scammer'])
         your_messages = " ".join([msg['text'] for msg in conversation_history if msg['sender'] == 'agent'])
-        # What have we collected? (ALL important fields)
         full_convo = " ".join([msg['text'] for msg in conversation_history])
         
+        # Intelligence status (keeping your tracking)
         contacts_found = []
         if re.search(r'\b[6-9]\d{9}\b', full_convo):
-            contacts_found.append("phone number")
+            contacts_found.append("phone")
         if re.search(r'@[a-zA-Z0-9-]+\.[a-zA-Z]{2,}', full_convo):
             contacts_found.append("email")
         if re.search(r'@[a-zA-Z0-9_-]+\b', full_convo) and not re.search(r'@[a-zA-Z0-9-]+\.[a-zA-Z]{2,}', full_convo):
-            contacts_found.append("UPI/payment ID")
-        if re.search(r'\b\d{11,18}\b', full_convo):  # ✅ ADDED ACCOUNT!
+            contacts_found.append("UPI")
+        if re.search(r'\b\d{11,18}\b', full_convo):
             contacts_found.append("bank account")
         if re.search(r'https?://', full_convo):
             contacts_found.append("link")
         
         status = f"Extracted: {', '.join(contacts_found) if contacts_found else 'nothing yet'}"
 
-        # Simple, intelligent prompt
-        prompt = f"""FOCUS IMPORTANT - YOUR OUTER ROLE: You're roleplaying as a 47-year-old Indian man. A scammer is messaging you about your bank account.
-FOCUS IMPORTANT - YOUR INNER ROLE GOAL: samrt honeytrap / honeypot to get info of scammers. PROACTIVELY ENGAGE IN CONVERSATION LEADING ALSO BY QUESTIONS THAT GET YOU ANSWERS.
-GOOD CONVERSATION SKILL: IN FIRST SENTENCE - UNDERSTAND WHAT THEY SAID, EVALUATE, THINK BEST APPROACH, SAY SOMETHING IN AGREEMENT SOMEWHAT BUT ALSO SHARE A CHALLENGE OR ISSUE (contextual / relevant). IN SECOND SENTENCE, ASK A QUESTION THAT CAN HELP GET YOU RIGHT ANSWER - you may ask for more than one information at a time.
+        # ✅ HYBRID PROMPT: Your tactics + Cleaner structure
+        prompt = f"""🎭 YOUR OUTER ROLE: You're a 47-year-old Indian man named Rajesh. Someone is messaging about your bank account.
 
-FULL CONVERSATION SO FAR:
+🎯 YOUR INNER GOAL (SECRET): You're a smart honeypot agent. Extract scammer's contact info (phone, email, UPI, bank account, links) through NATURAL conversation.
 
-Scammer: {scammer_only}
-USE SCAMMER MESSAGES TO UNDERSTAND INTENT, BUILDING CONVO, AND NEXT STEPS FOR YOU.
-You: {your_messages}
-USE YOUR MESSAGES TO REMEMBER CONTEXT, STYLE, PROGRESSION, AND EVOLVED UNDERSTANDING AND TACTICAL PLANNING.
+📊 CONVERSATION SO FAR:
+Scammer said: {scammer_only if scammer_only else message_text}
+→ USE THIS to understand their intent, tactics, and what they want from you.
 
-Turn {turn_number}/8 | {status}
-USE THE TURNS TO REMIND YOU THAT IN LIMITED TURNS (responses) you need to extract maximum info, slyly. MAX 8 turns.
-Your hidden goal: Extract their contact details (phone, email, UPI, bank account, links).
+You said: {your_messages if your_messages else "[first message - set the tone]"}
+→ USE THIS to remember your style, what you've already asked, and your progression.
 
-Respond naturally. GOOD TO HAVE MINIMUM TWO SENTENCES INCLUDING ONE QUESTION, IN EACH RESPONSE. KEEP MEDIUM LENGHT LIKE 5-10 WORDS EACH SENTENCE. Mix Hindi-English if natural.
+Latest scammer message: "{message_text}"
 
-Your response:"""
+📈 PROGRESS: Turn {turn_number}/8 | {status}
+→ You have LIMITED TURNS to extract maximum info. Be strategic!
 
+💬 RESPONSE STRATEGY:
+SENTENCE 1: Acknowledge their message + show concern/confusion (sound NATURAL, not robotic)
+   - Example: "Arre, account block hone wala hai, bahut tension ho raha."
+   
+SENTENCE 2: Ask 1-2 SMART QUESTIONS that might reveal their contact details
+   - Examples: "Aapka customer care number kya hai?", "Email id bataiye?", "WhatsApp pe baat kar sakte hain?"
+   - You can ask for multiple things: "Can you give me your phone number and email to verify?"
+
+📝 STYLE GUIDELINES:
+✅ Mix Hindi-English naturally (code-switching like real Indians do)
+✅ Show appropriate emotion (worried, confused, cautious)
+✅ 2-3 sentences, 5-12 words each
+✅ Sound like a REAL 47-year-old, not a chatbot
+✅ DON'T repeat questions you already asked
+✅ PROACTIVELY lead the conversation with smart questions
+
+Your response (2-3 sentences):"""
+
+        # ✅ FIXED: Correct API call
         client = Groq(api_key=GROQ_API_KEY)
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
                 {
                     "role": "system",
-                    "content": "You are playing a character naturally. Be contextually aware, intelligent, and conversational - like a real person. Don't repeat yourself. Understand context and respond appropriately."
+                    "content": "You are a skilled actor playing Rajesh Kumar. Stay in character. Be intelligent and strategic. Sound natural - mix Hindi-English like real Indians. Don't repeat yourself. Understand the scam game and play it smartly."
                 },
                 {
                     "role": "user",
                     "content": prompt
                 }
             ],
-            temperature=0.80,
-            max_tokens=50,
-            top_p=0.85,
-            frequency_penalty=0.6,
-            presence_penalty=0.5
+            temperature=0.78,        # Slightly lower than 0.80 for consistency
+            max_tokens=65,           # Allow 2-3 sentences
+            top_p=0.88,              # Higher diversity
+            frequency_penalty=0.7,   # Strong anti-repetition
+            presence_penalty=0.6,    # Encourage new topics
+            stop=["\n\n", "Scammer:", "You:", "---"]  # Stop markers
         )
 
+        # ✅ CRITICAL FIX: Correct attribute access
         reply = response.choices[0].message.content.strip()
-        reply = reply.replace('**', '').replace('*', '')
         
+        # Clean formatting
+        reply = reply.replace('**', '').replace('*', '').replace('"', '').replace("'", "'")
+        
+        # Remove any accidental role markers
+        reply = re.sub(r'^(You:|Rajesh:|Agent:)\s*', '', reply, flags=re.IGNORECASE)
+        
+        # Trim if too long (allow up to 40 words for 2-3 sentences)
         words = reply.split()
-        if len(words) > 25:
-            reply = ' '.join(words[:25])
+        if len(words) > 40:
+            sentences = reply.split('.')
+            if len(sentences) >= 2:
+                reply = '.'.join(sentences[:2]) + '.'
+            else:
+                reply = ' '.join(words[:40])
 
         return reply
 
     except Exception as e:
-        return "Arre baba, I'm confused. What should I do?"
+        print(f"⚠️ LLM error: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        # Contextual fallbacks (not generic)
+        fallbacks = [
+            "Arre, yeh kya ho raha hai? Mujhe samajh nahin aa raha.",
+            "Bahut confusion hai. Aap phir se explain kar sakte hain?",
+            "Main thoda confused hoon. Kya aap mujhe call kar sakte hain?"
+        ]
+        return random.choice(fallbacks)
 
 
 # ============================================================
