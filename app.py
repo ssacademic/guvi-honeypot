@@ -282,77 +282,61 @@ def get_engagement_strategy(turn_number, confidence, entities_count):
 # ============================================================
 
 def generate_response_groq(message_text, conversation_history, turn_number, scam_type, language="en"):
-    """Context-aware victim response - FIXED VERSION"""
+    """Reasoning-based response - let LLM think naturally"""
     try:
         persona = PERSONAS[language]
         
-        # Build conversation history
+        # Build history
         history_text = ""
         if conversation_history:
             recent = conversation_history[-6:]
             history_text = "\n".join([f"{msg['sender']}: {msg['text']}" for msg in recent])
         else:
-            history_text = "First message"
+            history_text = "(First message)"
 
-        # Context awareness
+        # What have we extracted?
         full_conversation = message_text + " " + " ".join([msg['text'] for msg in conversation_history])
         
-        already_have = {
-            "phone": bool(re.search(r'\b[6-9]\d{9}\b', full_conversation)),
-            "upi": bool(re.search(r'[a-zA-Z0-9._-]+@[a-zA-Z0-9_-]+', full_conversation)) and not bool(re.search(r'@[a-zA-Z0-9-]+\.', full_conversation)),
-            "email": bool(re.search(r'@[a-zA-Z0-9-]+\.', full_conversation)),
-            "account": bool(re.search(r'\b\d{11,18}\b', full_conversation))
-        }
+        has_phone = bool(re.search(r'\b[6-9]\d{9}\b', full_conversation))
+        has_email = bool(re.search(r'@[a-zA-Z0-9.-]+\.', full_conversation))
+        has_upi = bool(re.search(r'[a-zA-Z0-9._-]+@[a-zA-Z0-9_-]+', full_conversation)) and not has_email
+        has_account = bool(re.search(r'\b\d{11,18}\b', full_conversation))
         
-        missing = [k for k, v in already_have.items() if not v]
-        priority = missing[0] if missing else "any"
+        # What did I just say?
+        my_last_3 = [msg['text'] for msg in conversation_history if msg['sender'] == 'agent'][-3:]
 
-        # Anti-repetition
-        previous_agent_msgs = [msg['text'] for msg in conversation_history if msg['sender'] == 'agent']
-        recent_msgs = previous_agent_msgs[-2:] if len(previous_agent_msgs) >= 2 else []
-        
-        avoid_text = ""
-        if recent_msgs:
-            avoid_text = f"\n\nDon't repeat:\n" + "\n".join([f"- {msg}" for msg in recent_msgs])
+        # Simple prompt - trust the LLM
+        prompt = f"""CONTEXT:
+You're playing a {persona['age']}-year-old Indian, married, not tech-savvy. A scammer is trying to trick you.
 
-        # Ending note for late turns
-        ending_note = ""
-        if turn_number >= 7:
-            ending_note = "\n\nNOTE: Late conversation. If exhausted options, naturally disengage: tired/need to think/will handle later."
+THEIR MESSAGE: {message_text}
 
-        # Lean prompt
-        prompt = f"""You're a {persona['age']}-year-old {persona['occupation']} from India. Married, not tech-savvy.
-
-SCAMMER: {message_text}
-
-CHAT:
+CONVERSATION SO FAR:
 {history_text}
 
-TURN {turn_number}/8{ending_note}
+WHAT YOU'VE EXTRACTED:
+Phone: {"YES" if has_phone else "NO"} | Email: {"YES" if has_email else "NO"} | UPI: {"YES" if has_upi else "NO"} | Account: {"YES" if has_account else "NO"}
 
-MISSION: Extract scammer contacts (phone/email/UPI/account) by staying naive and creating natural obstacles.
+YOUR LAST 3 RESPONSES:
+{chr(10).join(["- " + msg for msg in my_last_3]) if my_last_3 else "(none yet)"}
 
-STATUS: Phone {"✓" if already_have["phone"] else "✗"} | Email {"✓" if already_have["email"] else "✗"} | UPI {"✓" if already_have["upi"] else "✗"} | Account {"✓" if already_have["account"] else "✗"}
-PRIORITY: {priority}
+YOUR MISSION:
+Extract their contact details (phone, email, UPI, account) while staying believable as a worried, confused elderly person.
 
-PRINCIPLES:
-1. Stay naive and worried (never say "scam", "verify", "suspicious")
-2. Create obstacles: device issues, technical inability, situational barriers
-3. Use helpers naturally: wife, brother (NOT son/daughter - too tech-aware)
-4. Pivot smartly: if have phone → ask email; have email → ask phone
-5. Late turns (7-8): Can naturally wind down if stuck
+CORE RULES:
+✓ Stay naive - you believe them, just facing practical problems
+✓ Create natural obstacles (tech issues, need alternative methods)
+✓ Never repeat yourself - check your last responses above
+✓ Never say "scam" or "suspicious" - stay worried and cooperative
+✓ Under 25 words
+✓ Mix Hindi-English naturally if it fits
 
-EXTRACTION:
-"Don't know how" → They explain/provide alternatives
-"Device not working" → They give different method
-"Wife/brother needs info" → They provide contact
+THINK:
+1. What info am I missing?
+2. What natural obstacle can I create to get it?
+3. How can I sound different from my last 3 responses?
 
-CHARACTER:
-- Consistent worried tone
-- Mix Hindi-English naturally
-- Under 25 words{avoid_text}
-
-Your natural response:"""
+Your response (under 25 words):"""
 
         client = Groq(api_key=GROQ_API_KEY)
         response = client.chat.completions.create(
@@ -360,42 +344,44 @@ Your natural response:"""
             messages=[
                 {
                     "role": "system", 
-                    "content": "Play a worried elderly person. Rigid goal: extract contacts. Flexible method: natural obstacles. Stay naive, never suspicious."
+                    "content": "You are roleplaying a worried elderly Indian person. Be natural, creative, and never repetitive. Your hidden goal: extract scammer contacts through believable obstacles."
                 },
                 {
                     "role": "user", 
                     "content": prompt
                 }
             ],
-            temperature=0.75,
+            temperature=0.85,  # Higher for more creativity
             max_tokens=50,
-            top_p=0.85,
-            frequency_penalty=0.6,
-            presence_penalty=0.3
+            top_p=0.9,
+            frequency_penalty=0.7,  # Strong anti-repetition
+            presence_penalty=0.5    # Encourage new topics
         )
 
         reply = response.choices[0].message.content.strip()
         
-        # Cleanup
+        # Minimal cleanup
         reply = reply.replace('**', '').replace('*', '').replace('"', '').replace("'", '')
-        reply = re.sub(r'^\d+[\\.\\)\\-]\\s*', '', reply)
-        reply = re.sub(r'^(Response|Reply|Answer|Victim|Elder|Honeypot):\\s*', '', reply, flags=re.IGNORECASE)
+        reply = re.sub(r'^(Response|Reply|Answer):\s*', '', reply, flags=re.IGNORECASE)
         
+        # Strict length
         words = reply.split()
-        if len(words) > 28:
-            reply = ' '.join(words[:28])
+        if len(words) > 25:
+            reply = ' '.join(words[:25])
 
         return reply
 
     except Exception as e:
         print(f"⚠️ Groq error: {e}")
+        # Unique fallbacks
         fallbacks = [
-            "Arre, phone not working. Can you help?",
-            "Very worried. That doesn't work. What else?",
-            "My wife will help. What details needed?",
-            "Don't understand. Can you send differently?"
+            "Arre baba, I'm so confused. What to do?",
+            "My hands shaking, can't type. Call me?",
+            "Network problem here. Email better for me.",
+            "Wife will handle. She needs your details."
         ]
         return fallbacks[turn_number % len(fallbacks)]
+
 
 
 
@@ -406,36 +392,36 @@ Your natural response:"""
 # ============================================================
 
 def extract_entities_enhanced(text):
-    """Extract actionable intelligence - FIXED email detection"""
+    """Extract intelligence - STRICT email/UPI separation"""
     entities = {}
 
     # ============================================================
-    # EMAILS: Has dot in domain part
+    # EMAILS FIRST: Must have .com/.in/.org etc
     # ============================================================
     emails = re.findall(
-        r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+\.[A-Za-z]{2,}\b',
+        r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b',
         text
     )
     entities["emails"] = list(set(emails))
 
     # ============================================================
-    # UPI: word@word WITHOUT dot (excluding emails)
+    # UPI: word@word with NO dot in domain
+    # Only extract if NOT already in emails
     # ============================================================
-    # Get all @mentions
-    all_at = re.findall(r'[a-zA-Z0-9._-]+@[a-zA-Z0-9_-]+', text)
+    potential_upis = re.findall(r'\b([a-zA-Z0-9._-]+@[a-zA-Z0-9_-]+)\b', text)
     
-    # UPI = those NOT in emails list
     upi_ids = []
-    for item in all_at:
-        # Check if domain has dot
-        domain = item.split('@')[1]
-        # UPI if: no dot in domain OR not in emails
-        if '.' not in domain and item not in emails:
-            upi_ids.append(item)
+    for item in potential_upis:
+        # Split by @
+        if '@' in item:
+            local, domain = item.split('@', 1)
+            # UPI only if domain has NO dots AND item not in emails
+            if '.' not in domain and item not in emails:
+                upi_ids.append(item)
     
     entities["upiIds"] = list(set(upi_ids))
 
-    # Rest remains same
+    # Rest unchanged
     entities["bankAccounts"] = list(set(re.findall(r'\b\d{11,18}\b', text)))
     entities["phoneNumbers"] = list(set(re.findall(r'\b[6-9]\d{9}\b', text)))
     entities["phishingLinks"] = list(set(re.findall(r'https?://[^\s]+|(?:bit\.ly|tinyurl|goo\.gl)/\w+', text, re.IGNORECASE)))
@@ -443,6 +429,7 @@ def extract_entities_enhanced(text):
     entities["bankNames"] = list(set(re.findall(r'\b(sbi|state bank|hdfc|icici|axis|kotak|pnb|bob|canara|union bank|paytm|phonepe|googlepay)\b', text, re.IGNORECASE)))
 
     return entities
+
 
 
 
