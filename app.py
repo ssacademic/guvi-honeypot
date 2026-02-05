@@ -255,102 +255,83 @@ def detect_language(message):
 # ============================================================
 
 def generate_response_groq(message_text, conversation_history, turn_number, scam_type, language="en"):
-    """Intelligent conversational agent - OPTIMIZED HYBRID"""
+    """Intelligent conversational agent"""
     try:
-        # Build context (your existing logic - KEEP IT!)
+        # Full context
+        full_history = ""
+        if conversation_history:
+            full_history = "\n".join([f"{msg['sender']}: {msg['text']}" for msg in conversation_history])
+            
         scammer_only = " ".join([msg['text'] for msg in conversation_history if msg['sender'] == 'scammer'])
         your_messages = " ".join([msg['text'] for msg in conversation_history if msg['sender'] == 'agent'])
+        # What have we collected? (ALL important fields)
         full_convo = " ".join([msg['text'] for msg in conversation_history])
         
-        # Intelligence status (your existing logic - KEEP IT!)
         contacts_found = []
         if re.search(r'\b[6-9]\d{9}\b', full_convo):
-            contacts_found.append("phone")
+            contacts_found.append("phone number")
         if re.search(r'@[a-zA-Z0-9-]+\.[a-zA-Z]{2,}', full_convo):
             contacts_found.append("email")
         if re.search(r'@[a-zA-Z0-9_-]+\b', full_convo) and not re.search(r'@[a-zA-Z0-9-]+\.[a-zA-Z]{2,}', full_convo):
-            contacts_found.append("UPI")
-        if re.search(r'\b\d{11,18}\b', full_convo):
+            contacts_found.append("UPI/payment ID")
+        if re.search(r'\b\d{11,18}\b', full_convo):  # ✅ ADDED ACCOUNT!
             contacts_found.append("bank account")
         if re.search(r'https?://', full_convo):
             contacts_found.append("link")
         
         status = f"Extracted: {', '.join(contacts_found) if contacts_found else 'nothing yet'}"
 
-        # ✅ HYBRID PROMPT: Your tactics + My clarity
-        prompt = f"""CHARACTER: You're Rajesh Kumar, 47-year-old Indian man. Cautious but curious.
+        # Simple, intelligent prompt
+        prompt = f"""FOCUS IMPORTANT - YOUR OUTER ROLE: You're roleplaying as a 47-year-old Indian man. A scammer is messaging you about your bank account.
+FOCUS IMPORTANT - YOUR INNER ROLE GOAL: samrt honeytrap / honeypot to get info of scammers. PROACTIVELY ENGAGE IN CONVERSATION LEADING ALSO BY QUESTIONS THAT GET YOU ANSWERS.
+GOOD CONVERSATION SKILL: IN FIRST SENTENCE - UNDERSTAND WHAT THEY SAID, EVALUATE, THINK BEST APPROACH, SAY SOMETHING IN AGREEMENT SOMEWHAT BUT ALSO SHARE A CHALLENGE OR ISSUE (contextual / relevant). IN SECOND SENTENCE, ASK A QUESTION THAT CAN HELP GET YOU RIGHT ANSWER - you may ask for more than one information at a time.
 
-HIDDEN MISSION: You're a honeypot agent. Extract scammer's contact info (phone, email, UPI, bank account, links) through natural conversation.
+FULL CONVERSATION SO FAR:
 
-CONVERSATION HISTORY:
-Scammer said: {scammer_only if scammer_only else message_text}
-You said: {your_messages if your_messages else "[first message]"}
+Scammer: {scammer_only}
+USE SCAMMER MESSAGES TO UNDERSTAND INTENT, BUILDING CONVO, AND NEXT STEPS FOR YOU.
+You: {your_messages}
+USE YOUR MESSAGES TO REMEMBER CONTEXT, STYLE, PROGRESSION, AND EVOLVED UNDERSTANDING AND TACTICAL PLANNING.
 
-Latest message: "{message_text}"
+Turn {turn_number}/8 | {status}
+USE THE TURNS TO REMIND YOU THAT IN LIMITED TURNS (responses) you need to extract maximum info, slyly. MAX 8 turns.
+Your hidden goal: Extract their contact details (phone, email, UPI, bank account, links).
 
-PROGRESS: Turn {turn_number}/8 | {status}
-
-RESPONSE STRATEGY:
-1st sentence: Acknowledge their message + express concern/confusion (be natural, not robotic)
-2nd sentence: Ask 1-2 smart questions that might get you their contact details
-   Examples: "Can I call you to verify?", "What's your employee ID?", "Which email should I use?"
-
-STYLE GUIDE:
-- Natural Hindi-English mix (if contextually appropriate)
-- 2-3 sentences max
-- 5-12 words per sentence
-- Sound like a real worried person, not a chatbot
-- Don't repeat what you already asked
+Respond naturally. GOOD TO HAVE MINIMUM TWO SENTENCES INCLUDING ONE QUESTION, IN EACH RESPONSE. KEEP MEDIUM LENGHT LIKE 5-10 WORDS EACH SENTENCE. Mix Hindi-English if natural.
 
 Your response:"""
 
-        # Parameters - OPTIMIZED for your use case
         client = Groq(api_key=GROQ_API_KEY)
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a skilled actor playing a character. Stay in character. Be contextually intelligent. Never break the fourth wall. Respond naturally based on conversation flow."
+                    "content": "You are playing a character naturally. Be contextually aware, intelligent, and conversational - like a real person. Don't repeat yourself. Understand context and respond appropriately."
                 },
                 {
                     "role": "user",
                     "content": prompt
                 }
             ],
-            temperature=0.75,        # ✅ Slightly lower (was 0.80) - more consistent
-            max_tokens=70,           # ✅ Increased (was 50) - allow 2-3 sentences
-            top_p=0.90,              # ✅ Slightly higher (was 0.85) - more diversity
-            frequency_penalty=0.7,   # ✅ Higher (was 0.6) - less repetition
-            presence_penalty=0.6,    # ✅ Higher (was 0.5) - encourage new topics
-            stop=["\n\n", "Scammer:", "You:"]  # ✅ NEW: Stop at conversation markers
+            temperature=0.80,
+            max_tokens=50,
+            top_p=0.85,
+            frequency_penalty=0.6,
+            presence_penalty=0.5
         )
 
-        reply = response.text.strip()
+        reply = response.choices[0].message.content.strip()
+        reply = reply.replace('**', '').replace('*', '')
         
-        # Clean formatting
-        reply = reply.replace('**', '').replace('*', '').replace('"', '')
-        
-        # Trim if too long (but allow up to 35 words for 2-3 sentences)
         words = reply.split()
-        if len(words) > 35:
-            # Try to cut at sentence boundary
-            sentences = reply.split('.')
-            if len(sentences) >= 2:
-                reply = '.'.join(sentences[:2]) + '.'
-            else:
-                reply = ' '.join(words[:35])
+        if len(words) > 25:
+            reply = ' '.join(words[:25])
 
         return reply
 
     except Exception as e:
-        print(f"⚠️ LLM error: {e}")
-        fallbacks = [
-            "Kya? I don't understand this.",
-            "Wait, what are you saying? I'm confused.",
-            "Can you explain more clearly?"
-        ]
-        return random.choice(fallbacks)
+        return "Arre baba, I'm confused. What should I do?"
 
 
 # ============================================================
