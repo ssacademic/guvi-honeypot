@@ -326,8 +326,8 @@ Your response:"""
             temperature=0.9,
             max_tokens=45,
             top_p=0.75,
-            frequency_penalty=0.4,
-            presence_penalty=0.3
+            frequency_penalty=0.8,
+            presence_penalty=0.5
         )
 
         reply = response.choices[0].message.content.strip()
