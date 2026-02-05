@@ -282,96 +282,73 @@ def get_engagement_strategy(turn_number, confidence, entities_count):
 # ============================================================
 
 def generate_response_groq(message_text, conversation_history, turn_number, scam_type, language="en"):
-    """Context-aware victim response - lean and consistent"""
+    """Principle-based victim response - TOKEN OPTIMIZED"""
     try:
         persona = PERSONAS[language]
         
-        # Build conversation history
         history_text = ""
         if conversation_history:
-            recent = conversation_history[-8:]
+            recent = conversation_history[-6:]
             history_text = "\n".join([f"{msg['sender']}: {msg['text']}" for msg in recent])
         else:
-            history_text = "First message in conversation"
+            history_text = "First message"
 
-        # ============================================================
-        # CONTEXT AWARENESS: What info do we already have?
-        # ============================================================
+        # Context awareness
         full_conversation = message_text + " " + " ".join([msg['text'] for msg in conversation_history])
         
         already_have = {
             "phone": bool(re.search(r'\b[6-9]\d{9}\b', full_conversation)),
-            "upi": bool(re.search(r'[\w\.-]+@[\w]+', full_conversation)),
-            "email": bool(re.search(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', full_conversation)),
+            "upi": bool(re.search(r'\b[a-zA-Z0-9._-]+@[a-zA-Z0-9_-]+\b', full_conversation)) and not bool(re.search(r'@[a-zA-Z0-9.-]+\.', full_conversation)),
+            "email": bool(re.search(r'@[a-zA-Z0-9.-]+\.', full_conversation)),
             "account": bool(re.search(r'\b\d{11,18}\b', full_conversation))
         }
         
         missing = [k for k, v in already_have.items() if not v]
-        next_target = missing[0] if missing else "any additional contact"
+        priority = missing[0] if missing else "any"
 
-        # ============================================================
-        # STAGE-BASED APPROACH
-        # ============================================================
-        if turn_number <= 2:
-            approach = "Be worried and confused. Ask basic questions naturally."
-        elif turn_number <= 4:
-            approach = "Show technical difficulty. You want to help but can't figure it out."
-        elif turn_number <= 6:
-            approach = f"Need alternative method. Naturally pivot to extract {next_target}."
-        else:
-            approach = "New obstacle (time/location). Keep them engaged with different angle."
-
-        # ============================================================
-        # ANTI-REPETITION
-        # ============================================================
+        # Anti-repetition
         previous_agent_msgs = [msg['text'] for msg in conversation_history if msg['sender'] == 'agent']
-        
-        recent_starts = []
-        if len(previous_agent_msgs) >= 2:
-            for msg in previous_agent_msgs[-2:]:
-                recent_starts.append(' '.join(msg.split()[:4]).lower())
+        recent_msgs = previous_agent_msgs[-2:] if len(previous_agent_msgs) >= 2 else []
         
         avoid_text = ""
-        if recent_starts:
-            avoid_text = f"\n⚠️ Don't repeat: {', '.join(recent_starts)}"
+        if recent_msgs:
+            avoid_text = f"\n\nDon't repeat:\n" + "\n".join([f"- {msg}" for msg in recent_msgs])
 
-        # ============================================================
-        # CORE PROMPT
-        # ============================================================
-        prompt = f"""You're a {persona['age']}-year-old {persona['occupation']} from India. You received this message and you're WORRIED.
+        # Lean prompt
+        prompt = f"""You're a {persona['age']}-year-old {persona['occupation']} from India. Married, not tech-savvy.
 
-SCAMMER SAID: {message_text}
+SCAMMER: {message_text}
 
-PREVIOUS CHAT:
+CHAT:
 {history_text}
 
-TURN {turn_number}/8 | APPROACH: {approach}
+TURN {turn_number}/8
 
-WHAT YOU ALREADY EXTRACTED:
-Phone: {"✅" if already_have["phone"] else "❌ TARGET THIS"} | UPI: {"✅" if already_have["upi"] else "❌"} | Email: {"✅" if already_have["email"] else "❌"} | Account: {"✅" if already_have["account"] else "❌"}
-→ NEXT PRIORITY: {next_target}
+MISSION: Extract scammer contacts (phone/email/UPI/account) by staying naive and creating natural obstacles.
 
-CORE STRATEGY:
-You're naive and worried (not suspicious). Create natural obstacles that force them to provide alternative contacts.
+STATUS: Phone {"✓" if already_have["phone"] else "✗"} | Email {"✓" if already_have["email"] else "✗"} | UPI {"✓" if already_have["upi"] else "✗"} | Account {"✓" if already_have["account"] else "✗"}
+PRIORITY: {priority}
+
+PRINCIPLES:
+1. Stay naive and worried (never say "scam", "verify", "suspicious")
+2. Create obstacles: device issues, technical inability, situational barriers
+3. Use helpers naturally: wife, brother, sister (NOT son/daughter - too tech-aware)
+4. Pivot smartly: if you have phone → ask for email; if have email → ask for phone
+5. Stay engaged: cooperative, just facing practical problems
 
 EXTRACTION TACTICS:
-1. Technical incompetence: "I don't know how to find OTP. Can I call you?" → Gets phone
-2. Device issues: "My phone broken. Can you email instead?" → Gets email  
-3. Family gatekeeper: "My son will help. What's your number?" → Gets contact
-4. Smart pivots: Already have phone? → Ask for email. Have UPI? → Ask for account.
+"I don't know how" → They explain/provide alternatives
+"My device not working" → They give different method
+"My wife/brother needs details" → They provide contact
+"That didn't work" → They get desperate, reveal more
 
-BEST EXAMPLES:
-✅ "Oh no! I'm scared. My phone is old, OTP not coming. Can I call you?"
-✅ "I don't have that app. Can you email me the details?"
-✅ "My daughter handles this. She needs your contact number."
-
-RULES:
-- Stay worried and naive (NEVER say "scam" or "verify")
+CHARACTER:
+- Consistent worried tone
+- Mix Hindi-English naturally
 - Under 25 words
-- Create obstacles naturally
-- Mix Hindi-English if it flows{avoid_text}
+- Genuine confusion (not interrogation){avoid_text}
 
-One brief response:"""
+Your natural response:"""
 
         client = Groq(api_key=GROQ_API_KEY)
         response = client.chat.completions.create(
@@ -379,18 +356,18 @@ One brief response:"""
             messages=[
                 {
                     "role": "system", 
-                    "content": "You're simulating a worried, non-tech-savvy elderly Indian. Stay naive. Extract scammer contacts through natural obstacles."
+                    "content": "Play a worried elderly person. Rigid goal: extract contacts. Flexible method: natural obstacles. Stay naive, never suspicious."
                 },
                 {
                     "role": "user", 
                     "content": prompt
                 }
             ],
-            temperature=0.9,
+            temperature=0.75,
             max_tokens=50,
-            top_p=0.88,
-            frequency_penalty=0.5,
-            presence_penalty=0.4
+            top_p=0.85,
+            frequency_penalty=0.6,
+            presence_penalty=0.3
         )
 
         reply = response.choices[0].message.content.strip()
@@ -398,9 +375,8 @@ One brief response:"""
         # Cleanup
         reply = reply.replace('**', '').replace('*', '').replace('"', '').replace("'", '')
         reply = re.sub(r'^\d+[\\.\\)\\-]\\s*', '', reply)
-        reply = re.sub(r'^(Response|Reply|Answer|Victim|Elder):\\s*', '', reply, flags=re.IGNORECASE)
+        reply = re.sub(r'^(Response|Reply|Answer|Victim|Elder|Honeypot):\\s*', '', reply, flags=re.IGNORECASE)
         
-        # Strict brevity
         words = reply.split()
         if len(words) > 28:
             reply = ' '.join(words[:28])
@@ -410,12 +386,13 @@ One brief response:"""
     except Exception as e:
         print(f"⚠️ Groq error: {e}")
         fallbacks = [
-            "I'm worried. What should I do? Can I call you?",
-            "My phone isn't working. Can you email me?",
-            "I don't understand. My son wants your number.",
-            "I'm confused. Which office should I visit?"
+            "Arre, phone not working. Can you help?",
+            "Very worried. That doesn't work. What else?",
+            "My wife will help. What details needed?",
+            "Don't understand. Can you send differently?"
         ]
         return fallbacks[turn_number % len(fallbacks)]
+
 
 
 
@@ -424,47 +401,72 @@ One brief response:"""
 # ============================================================
 
 def extract_entities_enhanced(text):
-    """Extract actionable intelligence from conversation"""
+    """Extract actionable intelligence - IMPROVED UPI/EMAIL distinction"""
     entities = {}
+
+    # ============================================================
+    # EMAIL: Must have dot in domain (e.g., @gmail.com, @bank.co.in)
+    # ============================================================
+    emails = re.findall(
+        r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', 
+        text
+    )
+    entities["emails"] = list(set(emails))
+
+    # ============================================================
+    # UPI: ANY word@word WITHOUT dot in domain
+    # ============================================================
+    # First, get all word@word patterns
+    all_at_patterns = re.findall(
+        r'\b([a-zA-Z0-9._-]+@[a-zA-Z0-9_-]+)\b', 
+        text, 
+        re.IGNORECASE
+    )
+    
+    # Filter: Keep only those WITHOUT dots after @ (not emails)
+    upi_ids = []
+    for pattern in all_at_patterns:
+        domain = pattern.split('@')[1]
+        # UPI = no dots in domain AND not already in emails
+        if '.' not in domain and pattern not in emails:
+            upi_ids.append(pattern)
+    
+    entities["upiIds"] = list(set(upi_ids))
 
     # Bank accounts (11-18 digits)
     bank_accounts = re.findall(r'\b\d{11,18}\b', text)
     entities["bankAccounts"] = list(set(bank_accounts))
 
-    # UPI IDs
-    upi_patterns = [
-        r'[\w\.-]+@(?:paytm|phonepe|googlepay|gpay|okaxis|oksbi|okicici|okhdfcbank|ybl|ibl|axl)',
-        r'[\w\.-]+@[a-z]{3,}',
-    ]
-    upi_ids = []
-    for pattern in upi_patterns:
-        upi_ids.extend(re.findall(pattern, text, re.IGNORECASE))
-    entities["upiIds"] = list(set(upi_ids))
-
     # Phone numbers (Indian)
     phone_numbers = re.findall(r'\b[6-9]\d{9}\b', text)
     entities["phoneNumbers"] = list(set(phone_numbers))
 
-    # Email addresses
-    emails = re.findall(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', text)
-    entities["emails"] = list(set(emails))
-
     # Links
-    links = re.findall(r'https?://[^\s]+|(?:bit\.ly|tinyurl|goo\.gl)/\w+', text, re.IGNORECASE)
+    links = re.findall(
+        r'https?://[^\s]+|(?:bit\.ly|tinyurl|goo\.gl)/\w+', 
+        text, 
+        re.IGNORECASE
+    )
     entities["phishingLinks"] = list(set(links))
 
     # Amounts
-    amounts = re.findall(r'(?:₹|rs\.?\s*|rupees?\s*)(\d+(?:,\d+)*(?:\.\d+)?)', text, re.IGNORECASE)
+    amounts = re.findall(
+        r'(?:₹|rs\.?\s*|rupees?\s*)(\d+(?:,\d+)*(?:\.\d+)?)', 
+        text, 
+        re.IGNORECASE
+    )
     entities["amounts"] = list(set(amounts))
 
     # Bank names
     bank_names = re.findall(
         r'\b(sbi|state bank|hdfc|icici|axis|kotak|pnb|bob|canara|union bank|paytm|phonepe|googlepay)\b',
-        text, re.IGNORECASE
+        text, 
+        re.IGNORECASE
     )
     entities["bankNames"] = list(set(bank_names))
 
     return entities
+
 
 
 # ============================================================
