@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: scam-honeypot
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GUVI_CALLBACK_URL
+        value: https://guvi-hackathon-callback.com/api/submit
