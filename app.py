@@ -235,14 +235,14 @@ PERSONAS = {
     "en": {
         "name": "Rajesh Kumar",
         "age": 47,
-        "occupation": "retired bank officer",
+        "occupation": "retired teacher",
         "traits": "cautious, polite, asks questions",
         "language_markers": []
     },
     "hi": {
         "name": "राजेश कुमार (Rajesh Kumar)",
         "age": 47,
-        "occupation": "retired bank officer",
+        "occupation": "retired teacher",
         "traits": "cautious, uses Hindi-English mix",
         "language_markers": []
     }
@@ -282,94 +282,141 @@ def get_engagement_strategy(turn_number, confidence, entities_count):
 # ============================================================
 
 def generate_response_groq(message_text, conversation_history, turn_number, scam_type, language="en"):
-    """Generate natural victim response using Groq - IMPROVED NON-REPETITIVE VERSION"""
+    """Context-aware victim response - lean and consistent"""
     try:
         persona = PERSONAS[language]
-        entities_count = len(conversation_history) // 2
-
+        
+        # Build conversation history
         history_text = ""
         if conversation_history:
-            recent = conversation_history[-4:]
+            recent = conversation_history[-8:]
             history_text = "\n".join([f"{msg['sender']}: {msg['text']}" for msg in recent])
         else:
             history_text = "First message in conversation"
 
-        # STAGE-BASED GUIDANCE (without prescriptive tone)
+        # ============================================================
+        # CONTEXT AWARENESS: What info do we already have?
+        # ============================================================
+        full_conversation = message_text + " " + " ".join([msg['text'] for msg in conversation_history])
+        
+        already_have = {
+            "phone": bool(re.search(r'\b[6-9]\d{9}\b', full_conversation)),
+            "upi": bool(re.search(r'[\w\.-]+@[\w]+', full_conversation)),
+            "email": bool(re.search(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', full_conversation)),
+            "account": bool(re.search(r'\b\d{11,18}\b', full_conversation))
+        }
+        
+        missing = [k for k, v in already_have.items() if not v]
+        next_target = missing[0] if missing else "any additional contact"
+
+        # ============================================================
+        # STAGE-BASED APPROACH
+        # ============================================================
         if turn_number <= 2:
-            stage = "You just received this. Be confused and cautious."
+            approach = "Be worried and confused. Ask basic questions naturally."
         elif turn_number <= 4:
-            stage = "You're getting skeptical. Ask for proof and details."
+            approach = "Show technical difficulty. You want to help but can't figure it out."
         elif turn_number <= 6:
-            stage = "You're suspicious. Question their legitimacy directly."
+            approach = f"Need alternative method. Naturally pivot to extract {next_target}."
         else:
-            stage = "You're very doubtful. Push back or suggest verifying in person."
+            approach = "New obstacle (time/location). Keep them engaged with different angle."
 
-        # ANTI-REPETITION: Show previous agent responses
+        # ============================================================
+        # ANTI-REPETITION
+        # ============================================================
         previous_agent_msgs = [msg['text'] for msg in conversation_history if msg['sender'] == 'agent']
-        avoid_phrases = []
-        if previous_agent_msgs:
-            # Extract common starting words from previous responses
-            for msg in previous_agent_msgs[-2:]:  # Last 2 responses
-                first_words = ' '.join(msg.split()[:3])
-                avoid_phrases.append(first_words)
-
+        
+        recent_starts = []
+        if len(previous_agent_msgs) >= 2:
+            for msg in previous_agent_msgs[-2:]:
+                recent_starts.append(' '.join(msg.split()[:4]).lower())
+        
         avoid_text = ""
-        if avoid_phrases:
-            avoid_text = f"\nDO NOT START WITH: {', '.join(avoid_phrases)}"
+        if recent_starts:
+            avoid_text = f"\n⚠️ Don't repeat: {', '.join(recent_starts)}"
 
-        prompt = f"""Outer Persona: You are a {persona['age']}-year-old {persona['occupation']} from India receiving a suspicious SMS/WhatsApp message.
-Inner Persona: An agent helping governments of indian states catch scammers, so your role is to naturally drive conversations in a way that you get more info from the prospective scammer, and also get details from them, such as banking ones, payment ones etc , which will help authorities.
+        # ============================================================
+        # CORE PROMPT
+        # ============================================================
+        prompt = f"""You're a {persona['age']}-year-old {persona['occupation']} from India. You received this message and you're WORRIED.
+
 SCAMMER SAID: {message_text}
 
-PREVIOUS CONVERSATION:
+PREVIOUS CHAT:
 {history_text}
 
-STAGE: Turn {turn_number}/8 - {stage}
+TURN {turn_number}/8 | APPROACH: {approach}
 
-CRITICAL INSTRUCTIONS:
-- Keep response under 30 words (very brief!)
-- Ask questions that extract actionable info, but not in an interrogative sense or in an honeytrapping sense, rather in a natural way
-- Once extracted, don't ask for same info again. prioritize contact numbers, emails, UPI IDs, bank accounts, etc.
-- Sound like a real person - natural, casual
-- Don't be aggressive
-- May Mix Hindi-English if it feels natural (but not mandatory)
-- NEVER repeat your previous phrases or opening words (maintain awareness using previous conversation )
-- Vary your sentence structure each time{avoid_text}
+WHAT YOU ALREADY EXTRACTED:
+Phone: {"✅" if already_have["phone"] else "❌ TARGET THIS"} | UPI: {"✅" if already_have["upi"] else "❌"} | Email: {"✅" if already_have["email"] else "❌"} | Account: {"✅" if already_have["account"] else "❌"}
+→ NEXT PRIORITY: {next_target}
 
-Respond naturally as a real person would:"""
+CORE STRATEGY:
+You're naive and worried (not suspicious). Create natural obstacles that force them to provide alternative contacts.
+
+EXTRACTION TACTICS:
+1. Technical incompetence: "I don't know how to find OTP. Can I call you?" → Gets phone
+2. Device issues: "My phone broken. Can you email instead?" → Gets email  
+3. Family gatekeeper: "My son will help. What's your number?" → Gets contact
+4. Smart pivots: Already have phone? → Ask for email. Have UPI? → Ask for account.
+
+BEST EXAMPLES:
+✅ "Oh no! I'm scared. My phone is old, OTP not coming. Can I call you?"
+✅ "I don't have that app. Can you email me the details?"
+✅ "My daughter handles this. She needs your contact number."
+
+RULES:
+- Stay worried and naive (NEVER say "scam" or "verify")
+- Under 25 words
+- Create obstacles naturally
+- Mix Hindi-English if it flows{avoid_text}
+
+One brief response:"""
 
         client = Groq(api_key=GROQ_API_KEY)
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.8,
-            max_tokens=70,
-            top_p=0.95
+            messages=[
+                {
+                    "role": "system", 
+                    "content": "You're simulating a worried, non-tech-savvy elderly Indian. Stay naive. Extract scammer contacts through natural obstacles."
+                },
+                {
+                    "role": "user", 
+                    "content": prompt
+                }
+            ],
+            temperature=0.9,
+            max_tokens=50,
+            top_p=0.88,
+            frequency_penalty=0.5,
+            presence_penalty=0.4
         )
 
         reply = response.choices[0].message.content.strip()
+        
+        # Cleanup
         reply = reply.replace('**', '').replace('*', '').replace('"', '').replace("'", '')
-        reply = re.sub(r'^\d+[\.\)]\s*', '', reply)
-        reply = re.sub(r'^(Response|Reply|Answer):\s*', '', reply, flags=re.IGNORECASE)
-
-        # Trim if too long
+        reply = re.sub(r'^\d+[\\.\\)\\-]\\s*', '', reply)
+        reply = re.sub(r'^(Response|Reply|Answer|Victim|Elder):\\s*', '', reply, flags=re.IGNORECASE)
+        
+        # Strict brevity
         words = reply.split()
-        if len(words) > 45:
-            reply = ' '.join(words[:45])
+        if len(words) > 28:
+            reply = ' '.join(words[:28])
 
         return reply
 
     except Exception as e:
         print(f"⚠️ Groq error: {e}")
-        # Varied fallbacks
         fallbacks = [
-            "What? Why is this happening?",
-            "Which account are you talking about?",
-            "How do I know this is real?",
-            "This sounds suspicious. Explain.",
-            "Let me verify with my bank first."
+            "I'm worried. What should I do? Can I call you?",
+            "My phone isn't working. Can you email me?",
+            "I don't understand. My son wants your number.",
+            "I'm confused. Which office should I visit?"
         ]
         return fallbacks[turn_number % len(fallbacks)]
+
 
 
 # ============================================================
