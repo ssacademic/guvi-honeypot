@@ -256,41 +256,71 @@ def detect_language(message):
 
 
 def generate_response_groq(message_text, conversation_history, turn_number, scam_type, language="en"):
-    """OPTIMIZED HYBRID VERSION - Best of Both Worlds"""
+    """
+    Intelligent conversational agent - HYBRID APPROACH (Production Version)
+    
+    This is the FIXED HYBRID version that maintains high entity extraction
+    while reducing opening phrase repetition.
+    """
     try:
-        # [Keep your excellent context building code]
+        # ============================================================
+        # STEP 1: BUILD CONVERSATION CONTEXT
+        # ============================================================
+        
+        # Separate scammer and agent messages
         scammer_only = " ".join([msg['text'] for msg in conversation_history if msg['sender'] == 'scammer'])
         your_messages = " ".join([msg['text'] for msg in conversation_history if msg['sender'] == 'agent'])
         full_convo = " ".join([msg['text'] for msg in conversation_history])
         
-        # Intelligence tracking
+        # ============================================================
+        # STEP 2: INTELLIGENCE TRACKING (What have we collected?)
+        # ============================================================
+        
         contacts_found = []
+        
+        # Check for phone numbers
         if re.search(r'\b[6-9]\d{9}\b', full_convo):
             contacts_found.append("phone")
+        
+        # Check for emails
         if re.search(r'@[a-zA-Z0-9-]+\.[a-zA-Z]{2,}', full_convo):
             contacts_found.append("email")
-        if re.search(r'@[a-zA-Z0-9_-]+\b', full_convo):
+        
+        # Check for UPI IDs
+        if re.search(r'@[a-zA-Z0-9_-]+\b', full_convo) and not re.search(r'@[a-zA-Z0-9-]+\.[a-zA-Z]{2,}', full_convo):
             contacts_found.append("UPI")
+        
+        # Check for bank accounts
         if re.search(r'\b\d{11,18}\b', full_convo):
             contacts_found.append("bank account")
+        
+        # Check for links
         if re.search(r'https?://', full_convo):
             contacts_found.append("link")
         
         status = f"Extracted: {', '.join(contacts_found) if contacts_found else 'nothing yet'}"
         
-        # ✅ ANTI-REPETITION: Track recent opening phrases
-        recent_openings = []
-        if conversation_history:
-            for msg in conversation_history[-3:]:
-                if msg['sender'] == 'agent':
-                    first_words = ' '.join(msg['text'].split()[:5])
-                    recent_openings.append(first_words)
+        # ============================================================
+        # STEP 3: ANTI-REPETITION TRACKING
+        # ============================================================
         
-        avoid_text = ""
-        if recent_openings:
-            avoid_text = f"\n\n⚠️ DO NOT START WITH: {' | '.join(recent_openings)}"
-
-        # ✅ IMPROVED HYBRID PROMPT (removes example phrase that caused repetition)
+        last_opening = ""
+        if conversation_history:
+            # Get only agent messages
+            agent_msgs = [msg for msg in conversation_history if msg['sender'] == 'agent']
+            if agent_msgs:
+                # Get first 6 words of last agent message
+                last_opening = ' '.join(agent_msgs[-1]['text'].split()[:6])
+        
+        # Add warning to prompt if we have a recent opening
+        avoid_hint = ""
+        if last_opening:
+            avoid_hint = f"\n⚠️ Your last response started with: '{last_opening}' - DON'T repeat this opening! Use a different emotion/phrase."
+        
+        # ============================================================
+        # STEP 4: BUILD LLM PROMPT
+        # ============================================================
+        
         prompt = f"""🎭 YOUR OUTER ROLE: You're a 47-year-old Indian man named Rajesh. Someone is messaging about your bank account.
 
 🎯 YOUR INNER GOAL (SECRET): You're a smart honeypot agent. Extract scammer's contact info (phone, email, UPI, bank account, links) through NATURAL conversation.
@@ -300,81 +330,111 @@ Scammer said: {scammer_only if scammer_only else message_text}
 → USE THIS to understand their intent, tactics, and what they want from you.
 
 You said: {your_messages if your_messages else "[first message - set the tone]"}
-→ USE THIS to remember your style and avoid repetition.
+→ USE THIS to remember your style, what you've already asked, and your progression.
 
 Latest scammer message: "{message_text}"
 
 📈 PROGRESS: Turn {turn_number}/8 | {status}
+→ You have LIMITED TURNS to extract maximum info. Be strategic!
 
 💬 RESPONSE STRATEGY:
-SENTENCE 1: Show you understood their message + express your emotion (worried/confused/cautious)
-   - Sound natural, not robotic
-   - Vary your opening each time
+SENTENCE 1: Acknowledge their message + show concern/confusion (sound NATURAL, not robotic)
+   - VARY your opening each time: "Mujhe confusion ho rahi", "Yeh toh serious lag raha", "Main bahut pareshaan hoon", "Arre yaar", "Arrey baap re", etc.
    
 SENTENCE 2: Ask 1-2 SMART QUESTIONS that might reveal their contact details
-   - Options: "Aapka customer care number?", "Email id?", "WhatsApp pe baat kar sakte?", "Link bhej sakte ho?"
-   - You can ask for MULTIPLE things in one question
+   - Examples: "Aapka customer care number kya hai?", "Email id bataiye?", "WhatsApp pe baat kar sakte hain?"
+   - You can ask for MULTIPLE things: "Can you give me your phone number and email to verify?"
 
-📝 STYLE:
-✅ Mix Hindi-English naturally (code-switching)
+📝 STYLE GUIDELINES:
+✅ Mix Hindi-English naturally (code-switching like real Indians do)
+✅ Show appropriate emotion (worried, confused, cautious)
 ✅ 2-3 sentences, 5-12 words each
-✅ Sound like a REAL person, not AI
-✅ NEVER repeat your previous opening phrases{avoid_text}
+✅ Sound like a REAL 47-year-old, not a chatbot
+✅ DON'T repeat questions you already asked
+✅ PROACTIVELY lead the conversation with smart questions{avoid_hint}
 
 Your response (2-3 sentences):"""
 
-        # ✅ OPTIMIZED PARAMETERS (Fixed from Updated version)
+        # ============================================================
+        # STEP 5: CALL GROQ API
+        # ============================================================
+        
         client = Groq(api_key=GROQ_API_KEY)
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a skilled actor playing Rajesh Kumar. Stay in character. Be intelligent and strategic. Sound natural - mix Hindi-English like real Indians. NEVER repeat yourself. Understand the scam game and play it smartly. Vary your sentence structure."
+                    "content": "You are a skilled actor playing Rajesh Kumar. Stay in character. Be intelligent and strategic. Sound natural - mix Hindi-English like real Indians. Don't repeat yourself. Understand the scam game and play it smartly."
                 },
                 {
                     "role": "user",
                     "content": prompt
                 }
             ],
-            temperature=0.79,        # ✅ Sweet spot between 0.78-0.80
-            max_tokens=70,           # ✅ Increased slightly for full sentences
-            top_p=0.87,              # ✅ Balanced diversity
-            frequency_penalty=0.65,  # ✅ FIXED: Reduced from 0.7/0.75 (was too high)
-            presence_penalty=0.55,   # ✅ FIXED: Reduced from 0.6/0.65 (was too high)
-            stop=None                # ✅ CRITICAL FIX: Removed stop sequences
+            temperature=0.78,        # ✅ Proven optimal
+            max_tokens=65,           # ✅ Allows 2-3 sentences
+            top_p=0.88,              # ✅ Good diversity
+            frequency_penalty=0.7,   # ✅ Anti-repetition
+            presence_penalty=0.6,    # ✅ Topic variety
+            stop=["\\n\\n", "Scammer:", "You:", "---"]
         )
 
+        # ============================================================
+        # STEP 6: EXTRACT AND CLEAN RESPONSE
+        # ============================================================
+        
         reply = response.choices[0].message.content.strip()
         
-        # Clean formatting
-        reply = reply.replace('**', '').replace('*', '').replace('"', '').replace("'", "'")
+        # Remove markdown formatting
+        reply = reply.replace('**', '').replace('*', '')
+        
+        # Remove quotes (both types)
+        reply = reply.replace('"', '').replace("'", "'")
+        
+        # Remove any accidental role markers
         reply = re.sub(r'^(You:|Rajesh:|Agent:|Response:)\s*', '', reply, flags=re.IGNORECASE)
         
-        # Trim if too long
+        # ============================================================
+        # STEP 7: ENFORCE LENGTH LIMITS
+        # ============================================================
+        
         words = reply.split()
         if len(words) > 40:
+            # Try to preserve sentence boundaries
             sentences = reply.split('.')
             if len(sentences) >= 2:
+                # Keep first 2 complete sentences
                 reply = '.'.join(sentences[:2]) + '.'
             else:
+                # Fallback: truncate at 40 words
                 reply = ' '.join(words[:40])
 
         return reply
 
     except Exception as e:
+        # ============================================================
+        # STEP 8: FALLBACK HANDLING (if API fails)
+        # ============================================================
+        
         print(f"⚠️ LLM error: {e}")
         import traceback
         traceback.print_exc()
         
-        # Varied contextual fallbacks (not generic)
-        fallbacks = [
-            "Yeh kya ho raha hai? Main samajh nahin pa raha.",
-            "Aapka number kya hai? Main call karke confirm karna chahta hoon.",
-            "Confusion ho rahi hai. Email pe details bhej sakte hain?"
+        # ✅ FIXED: Random selection instead of sequential
+        contextual_fallbacks = [
+            "Mujhe thoda confusion ho rahi hai. Aapka number aur email id kya hai?",
+            "Main samajh nahin pa raha. Kya aap WhatsApp pe details bhej sakte hain?",
+            "Yeh kya scene hai? Mujhe aapka customer care number chahiye.",
+            "Wait, aap kaun ho? Apna phone number aur email bataiye.",
+            "Bahut confusing hai yeh. Koi link ya contact details bhej sakte ho?",
+            "Arre yaar, explain toh karo. Aapka contact number kya hai?",
+            "Main verify karna chahta hoon. Email id aur WhatsApp number bataiye.",
+            "Thoda detail mein bataiye. Aapka official number aur email kya hai?"
         ]
-        return fallbacks[turn_number % len(fallbacks)]
-
+        
+        # ✅ Use random.choice for true randomization
+        return random.choice(contextual_fallbacks)
 
 
 # ============================================================
