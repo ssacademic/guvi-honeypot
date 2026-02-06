@@ -19,6 +19,38 @@ from flask import Flask, request, jsonify
 
 from groq import Groq
 
+# ============================================================
+# REQUEST VELOCITY CONTROL (Prevents burst-based throttling)
+# ============================================================
+
+import time
+from threading import Lock
+
+_request_pacer_lock = Lock()
+_last_groq_request_time = 0
+MIN_REQUEST_INTERVAL = 2.0  # Minimum 2 seconds between ANY Groq requests
+
+def pace_groq_request():
+    """
+    Ensures minimum time interval between Groq API requests.
+    This prevents burst-based throttling even when under RPM limit.
+    
+    Groq's 429 is triggered by REQUEST VELOCITY, not just count.
+    """
+    global _last_groq_request_time
+    
+    with _request_pacer_lock:
+        current_time = time.time()
+        time_since_last = current_time - _last_groq_request_time
+        
+        if time_since_last < MIN_REQUEST_INTERVAL:
+            wait_time = MIN_REQUEST_INTERVAL - time_since_last
+            print(f"⏱️  Pacing: waiting {wait_time:.1f}s to prevent burst throttling")
+            time.sleep(wait_time)
+        
+        _last_groq_request_time = time.time()
+
+print("✅ Request velocity pacer initialized (min 2s between requests)")
 
 
 # ============================================================
@@ -263,14 +295,13 @@ def detect_language(message):
 
 
 def generate_response_groq(message_text, conversation_history, turn_number, scam_type, language="en"):
-    """Intelligent conversational agent - SDK-AWARE VERSION"""
+    """Intelligent conversational agent - VELOCITY-AWARE VERSION"""
     
-    # Build context (same as before)
+    # [All your existing context building code...]
     scammer_only = " ".join([msg['text'] for msg in conversation_history if msg['sender'] == 'scammer'])
     your_messages = " ".join([msg['text'] for msg in conversation_history if msg['sender'] == 'agent'])
     full_convo = " ".join([msg['text'] for msg in conversation_history])
     
-    # Intelligence tracking (same as before)
     contacts_found = []
     if re.search(r'\b[6-9]\d{9}\b', full_convo):
         contacts_found.append("phone")
@@ -285,7 +316,6 @@ def generate_response_groq(message_text, conversation_history, turn_number, scam
     
     status = f"Extracted: {', '.join(contacts_found) if contacts_found else 'nothing yet'}"
 
-    # Same prompt as before
     prompt = f"""🎭 YOUR OUTER ROLE: You're a 47-year-old Indian man named Rajesh. Someone is messaging about your bank account.
 
 🎯 YOUR INNER GOAL (SECRET): You're a smart honeypot agent. Extract scammer's contact info (phone, email, UPI, bank account, links) through NATURAL conversation.
@@ -319,7 +349,9 @@ SENTENCE 2: Ask 1-2 SMART QUESTIONS that might reveal their contact details
 
 Your response (2-3 sentences):"""
 
-    # ✅ NEW: Exponential backoff wrapper
+    # ✅ CRITICAL: Pace request BEFORE making API call
+    pace_groq_request()  # This ensures 2s minimum gap from last request
+    
     max_retries = 3
     base_delay = 1
     
@@ -327,7 +359,6 @@ Your response (2-3 sentences):"""
         try:
             client = Groq(api_key=GROQ_API_KEY)
             
-            # ✅ SDK handles auto-retry internally (2 retries built-in)
             response = client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
                 messages=[
@@ -341,49 +372,44 @@ Your response (2-3 sentences):"""
                     }
                 ],
                 temperature=0.78,
-                max_tokens=65,
+                max_tokens=100,
                 top_p=0.88,
                 frequency_penalty=0.7,
                 presence_penalty=0.6,
                 stop=["\n\n", "Scammer:", "You:", "---"],
-                timeout=5.0  # ✅ Add timeout
+                timeout=5.0
             )
 
             reply = response.choices[0].message.content.strip()
             
-            # Clean formatting (same as before)
+            # Clean formatting
             reply = reply.replace('**', '').replace('*', '').replace('"', '').replace("'", "'")
             reply = re.sub(r'^(You:|Rajesh:|Agent:)\s*', '', reply, flags=re.IGNORECASE)
             
-            # Trim if too long (same as before)
+            # Trim if too long
             words = reply.split()
-            if len(words) > 40:
+            if len(words) > 45:
                 sentences = reply.split('.')
                 if len(sentences) >= 2:
                     reply = '.'.join(sentences[:2]) + '.'
                 else:
-                    reply = ' '.join(words[:40])
+                    reply = ' '.join(words[:45])
 
             return reply
             
         except Exception as e:
             error_message = str(e)
-            
-            # Check if it's a rate limit error (429)
             is_rate_limit = '429' in error_message or 'rate_limit' in error_message.lower()
             
             if is_rate_limit and attempt < max_retries - 1:
-                # Exponential backoff with jitter
                 wait_time = min(base_delay * (2 ** attempt) + random.uniform(0, 1), 16)
-                print(f"⏳ Rate limited. Retry {attempt + 1}/{max_retries} in {wait_time:.1f}s")
+                print(f"⏳ Rate limited despite pacing. Retry {attempt + 1}/{max_retries} in {wait_time:.1f}s")
                 time.sleep(wait_time)
                 continue
             
-            # Last attempt or non-rate-limit error
             print(f"⚠️ LLM error (attempt {attempt + 1}/{max_retries}): {e}")
             
             if attempt == max_retries - 1:
-                # Final fallback
                 import traceback
                 traceback.print_exc()
                 
