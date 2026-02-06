@@ -520,21 +520,21 @@ def generate_response_groq(message_text, conversation_history, turn_number, scam
     # ============================================================
     # EXTRACT VALUES (unchanged)
     # ============================================================
-    extracted_phones = re.findall(r'\b[6-9]\d{9}\b', full_convo)
+    extracted_phones = re.findall(r'\b[6-9]\d{9}\b', scammer_only)
     
-    extracted_emails_full = re.findall(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b', full_convo)
-    email_contexts = re.findall(r'email (?:is |id |: ?)?([A-Za-z0-9._%+-]+@[A-Za-z0-9._-]+)', full_convo, re.IGNORECASE)
+    extracted_emails_full = re.findall(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b', scammer_only)
+    email_contexts = re.findall(r'email (?:is |id |: ?)?([A-Za-z0-9._%+-]+@[A-Za-z0-9._-]+)', scammer_only, re.IGNORECASE)
     extracted_emails = list(set(extracted_emails_full + email_contexts))
     
     extracted_upis = []
-    for match in re.findall(r'\b([a-zA-Z0-9._-]+@[a-zA-Z0-9_-]+)\b', full_convo):
+    for match in re.findall(r'\b([a-zA-Z0-9._-]+@[a-zA-Z0-9_-]+)\b', scammer_only):
         if '@' in match:
             parts = match.split('@', 1)
             if len(parts) == 2 and '.' not in parts[1] and match not in extracted_emails:
                 extracted_upis.append(match)
     
-    extracted_links = re.findall(r'https?://[^\s]+', full_convo)
-    extracted_accounts = re.findall(r'\b\d{11,18}\b', full_convo)
+    extracted_links = re.findall(r'https?://[^\s]+', scammer_only)
+    extracted_accounts = re.findall(r'\b\d{11,18}\b', scammer_only)
     
     # ============================================================
     # BUILD STATUS
@@ -612,13 +612,13 @@ def generate_response_groq(message_text, conversation_history, turn_number, scam
     # ============================================================
     # ENHANCED 17B-OPTIMIZED PROMPT
     # ============================================================
-    prompt = f"""You are Rajesh Kumar, a 47-year-old retired teacher from Mumbai. 
+    prompt = f"""You are a 47-year-old retired teacher. 
 Someone claiming to be from your bank has messaged you saying your account is compromised. you're somewhat anxious, worried, cautious.
 
 Your instinct is to verify but comply. You want to help resolve this, but you need to confirm they're legitimate before sharing anything sensitive.
 
 🎯 YOUR ORIGINAL ROLE (Hidden):
-Secretly, you are a honeypot, working for government - trying to engage scammers and ask them questions to get valuable details from them. you know this is likely a scam. Extract: phone numbers, emails, UPI IDs, websites/links.
+VERY CRITICAL: Secretly, you are a honeypot, working for government - trying to engage scammers and ask them questions to get valuable details from them. you know this is likely a scam. Extract: phone numbers, emails, UPI IDs, websites/links.
 
 You'll do this by acting worried and cooperative, asking verification questions that seem natural for a cautious person.
 
@@ -665,9 +665,9 @@ Sound natural:
 - Use natural Hindi-English code-mixing when fit
 
 Avoid roboticness:
-- No filler phrases ("Main samajhna chahta hoon...")
-- No repeated patterns or common long phrases in your messages - BIG NO
-- No asking for what info you already have
+- No filler phrases ("Main samajhna chahta hoon...", "bahut zyada", "bahut", "bahut chinta", "bahut tension")
+- CRITICAL: No repeated patterns or common long phrases in your messages - BIG NO
+- No asking for info that you already have
 - No useless info demanding (CEO names, employee IDs without contact)
 
 📝 RESPONSE GUIDELINES:
@@ -750,7 +750,7 @@ You are NOT following rules mechanically. You are an intelligent human with tact
                     }
                 ],
                 temperature=0.9,  # Higher for more natural variety
-                max_tokens=80,
+                max_tokens=100,
                 top_p=0.9,
                 frequency_penalty=0.8,  # Prevent repetition
                 presence_penalty=0.7,
@@ -770,12 +770,12 @@ You are NOT following rules mechanically. You are an intelligent human with tact
             
             # Trim
             words = reply.split()
-            if len(words) > 35:
+            if len(words) > 45:
                 sentences = reply.split('.')
                 if len(sentences) >= 2:
                     reply = '.'.join(sentences[:2]) + '.'
                 else:
-                    reply = ' '.join(words[:35])
+                    reply = ' '.join(words[:45])
 
             print(f"✅ LLM response generated")
             return reply
