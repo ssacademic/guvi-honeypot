@@ -50,7 +50,7 @@ class RateLimitTracker:
         self.rpm_limit = rpm_limit
         self.request_times = deque()
         self.lock = Lock()
-        self.min_interval = 3.5
+        self.min_interval = 6
         self.last_request = 0
         print(f"🔥 Configuration:")
         print(f"   RPM Limit: {self.rpm_limit}")
