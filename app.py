@@ -256,71 +256,29 @@ def detect_language(message):
 
 
 def generate_response_groq(message_text, conversation_history, turn_number, scam_type, language="en"):
-    """
-    Intelligent conversational agent - HYBRID APPROACH (Production Version)
-    
-    This is the FIXED HYBRID version that maintains high entity extraction
-    while reducing opening phrase repetition.
-    """
+    """Intelligent conversational agent - FIXED HYBRID"""
     try:
-        # ============================================================
-        # STEP 1: BUILD CONVERSATION CONTEXT
-        # ============================================================
-        
-        # Separate scammer and agent messages
+        # Build context (keeping your excellent logic)
         scammer_only = " ".join([msg['text'] for msg in conversation_history if msg['sender'] == 'scammer'])
         your_messages = " ".join([msg['text'] for msg in conversation_history if msg['sender'] == 'agent'])
         full_convo = " ".join([msg['text'] for msg in conversation_history])
         
-        # ============================================================
-        # STEP 2: INTELLIGENCE TRACKING (What have we collected?)
-        # ============================================================
-        
+        # Intelligence tracking
         contacts_found = []
-        
-        # Check for phone numbers
         if re.search(r'\b[6-9]\d{9}\b', full_convo):
             contacts_found.append("phone")
-        
-        # Check for emails
         if re.search(r'@[a-zA-Z0-9-]+\.[a-zA-Z]{2,}', full_convo):
             contacts_found.append("email")
-        
-        # Check for UPI IDs
         if re.search(r'@[a-zA-Z0-9_-]+\b', full_convo) and not re.search(r'@[a-zA-Z0-9-]+\.[a-zA-Z]{2,}', full_convo):
             contacts_found.append("UPI")
-        
-        # Check for bank accounts
         if re.search(r'\b\d{11,18}\b', full_convo):
             contacts_found.append("bank account")
-        
-        # Check for links
         if re.search(r'https?://', full_convo):
             contacts_found.append("link")
         
         status = f"Extracted: {', '.join(contacts_found) if contacts_found else 'nothing yet'}"
-        
-        # ============================================================
-        # STEP 3: ANTI-REPETITION TRACKING
-        # ============================================================
-        
-        last_opening = ""
-        if conversation_history:
-            # Get only agent messages
-            agent_msgs = [msg for msg in conversation_history if msg['sender'] == 'agent']
-            if agent_msgs:
-                # Get first 6 words of last agent message
-                last_opening = ' '.join(agent_msgs[-1]['text'].split()[:6])
-        
-        # Add warning to prompt if we have a recent opening
-        avoid_hint = ""
-        if last_opening:
-            avoid_hint = f"\n⚠️ Your last response started with: '{last_opening}' - DON'T repeat this opening! Use a different emotion/phrase."
-        
-        # ============================================================
-        # STEP 4: BUILD LLM PROMPT
-        # ============================================================
-        
+
+        # ✅ ORIGINAL HYBRID PROMPT (NO ANTI-REPETITION WARNINGS)
         prompt = f"""🎭 YOUR OUTER ROLE: You're a 47-year-old Indian man named Rajesh. Someone is messaging about your bank account.
 
 🎯 YOUR INNER GOAL (SECRET): You're a smart honeypot agent. Extract scammer's contact info (phone, email, UPI, bank account, links) through NATURAL conversation.
@@ -339,11 +297,10 @@ Latest scammer message: "{message_text}"
 
 💬 RESPONSE STRATEGY:
 SENTENCE 1: Acknowledge their message + show concern/confusion (sound NATURAL, not robotic)
-   - VARY your opening each time: "Mujhe confusion ho rahi", "Yeh toh serious lag raha", "Main bahut pareshaan hoon", "Arre yaar", "Arrey baap re", etc.
    
 SENTENCE 2: Ask 1-2 SMART QUESTIONS that might reveal their contact details
    - Examples: "Aapka customer care number kya hai?", "Email id bataiye?", "WhatsApp pe baat kar sakte hain?"
-   - You can ask for MULTIPLE things: "Can you give me your phone number and email to verify?"
+   - You can ask for multiple things: "Can you give me your phone number and email to verify?"
 
 📝 STYLE GUIDELINES:
 ✅ Mix Hindi-English naturally (code-switching like real Indians do)
@@ -351,14 +308,11 @@ SENTENCE 2: Ask 1-2 SMART QUESTIONS that might reveal their contact details
 ✅ 2-3 sentences, 5-12 words each
 ✅ Sound like a REAL 47-year-old, not a chatbot
 ✅ DON'T repeat questions you already asked
-✅ PROACTIVELY lead the conversation with smart questions{avoid_hint}
+✅ PROACTIVELY lead the conversation with smart questions
 
 Your response (2-3 sentences):"""
 
-        # ============================================================
-        # STEP 5: CALL GROQ API
-        # ============================================================
-        
+        # ✅ ORIGINAL PARAMETERS (DO NOT CHANGE)
         client = Groq(api_key=GROQ_API_KEY)
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
@@ -372,68 +326,48 @@ Your response (2-3 sentences):"""
                     "content": prompt
                 }
             ],
-            temperature=0.78,        # ✅ Proven optimal
-            max_tokens=65,           # ✅ Allows 2-3 sentences
-            top_p=0.88,              # ✅ Good diversity
-            frequency_penalty=0.7,   # ✅ Anti-repetition
-            presence_penalty=0.6,    # ✅ Topic variety
+            temperature=0.78,
+            max_tokens=65,
+            top_p=0.88,
+            frequency_penalty=0.7,
+            presence_penalty=0.6,
             stop=["\\n\\n", "Scammer:", "You:", "---"]
         )
 
-        # ============================================================
-        # STEP 6: EXTRACT AND CLEAN RESPONSE
-        # ============================================================
-        
         reply = response.choices[0].message.content.strip()
         
-        # Remove markdown formatting
-        reply = reply.replace('**', '').replace('*', '')
+        # Clean formatting
+        reply = reply.replace('**', '').replace('*', '').replace('"', '').replace("'", "'")
+        reply = re.sub(r'^(You:|Rajesh:|Agent:)\s*', '', reply, flags=re.IGNORECASE)
         
-        # Remove quotes (both types)
-        reply = reply.replace('"', '').replace("'", "'")
-        
-        # Remove any accidental role markers
-        reply = re.sub(r'^(You:|Rajesh:|Agent:|Response:)\s*', '', reply, flags=re.IGNORECASE)
-        
-        # ============================================================
-        # STEP 7: ENFORCE LENGTH LIMITS
-        # ============================================================
-        
+        # Trim if too long
         words = reply.split()
         if len(words) > 40:
-            # Try to preserve sentence boundaries
             sentences = reply.split('.')
             if len(sentences) >= 2:
-                # Keep first 2 complete sentences
                 reply = '.'.join(sentences[:2]) + '.'
             else:
-                # Fallback: truncate at 40 words
                 reply = ' '.join(words[:40])
 
         return reply
 
     except Exception as e:
-        # ============================================================
-        # STEP 8: FALLBACK HANDLING (if API fails)
-        # ============================================================
-        
         print(f"⚠️ LLM error: {e}")
         import traceback
         traceback.print_exc()
         
-        # ✅ FIXED: Random selection instead of sequential
+        # ✅ ONLY CHANGE: Better fallbacks
         contextual_fallbacks = [
-            "Mujhe thoda confusion ho rahi hai. Aapka number aur email id kya hai?",
-            "Main samajh nahin pa raha. Kya aap WhatsApp pe details bhej sakte hain?",
-            "Yeh kya scene hai? Mujhe aapka customer care number chahiye.",
-            "Wait, aap kaun ho? Apna phone number aur email bataiye.",
-            "Bahut confusing hai yeh. Koi link ya contact details bhej sakte ho?",
-            "Arre yaar, explain toh karo. Aapka contact number kya hai?",
-            "Main verify karna chahta hoon. Email id aur WhatsApp number bataiye.",
-            "Thoda detail mein bataiye. Aapka official number aur email kya hai?"
+            "Arre yaar, samajh nahin aa raha. Aapka number aur email id kya hai?",
+            "Bahut confusion ho rahi hai. WhatsApp pe baat kar sakte hain?",
+            "Main thoda nervous ho gaya. Aapka customer care number bataiye?",
+            "Yeh kya chal raha hai? Link ya contact details bhej sakte ho?",
+            "Wait karo, pehle verify karna hai. Aapka phone number aur email do.",
+            "Main confirm karna chahta hoon. Koi official link hai?",
+            "Thoda detail mein samjhao. Aapka WhatsApp number kya hai?",
+            "Mujhe aapka supervisor se baat karni hai. Unka number do."
         ]
         
-        # ✅ Use random.choice for true randomization
         return random.choice(contextual_fallbacks)
 
 
