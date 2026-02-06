@@ -320,15 +320,126 @@ def detect_language(message):
 # ============================================================
 
 
-def generate_response_groq(message_text, conversation_history, turn_number, scam_type, language="en"):
-    """FIXED: Single API call, no retries, smart fallback"""
+def generate_smart_fallback(message_text, conversation_history, turn_number, contacts_found):
+    """Goal-oriented fallback: EVERY response requests specific contact info"""
     
-    # Build context
+    # Get conversation history
+    agent_messages = " ".join([
+        msg['text'].lower() 
+        for msg in conversation_history 
+        if msg['sender'] == 'agent'
+    ])
+    
+    # Check what we've already asked for
+    asked_for_phone = any(word in agent_messages for word in ['number', 'phone', 'contact', 'whatsapp', 'mobile'])
+    asked_for_email = any(word in agent_messages for word in ['email', 'mail'])
+    asked_for_upi = any(word in agent_messages for word in ['upi', 'phonepe', 'paytm', 'gpay'])
+    asked_for_link = any(word in agent_messages for word in ['link', 'website', 'url', 'portal'])
+    
+    # Check what we've extracted
+    has_phone = "phone" in contacts_found
+    has_email = "email" in contacts_found
+    has_upi = "UPI" in contacts_found
+    has_link = "link" in contacts_found
+    
+    # ============================================================
+    # TURN 1-2: Build trust + ask for primary contact
+    # ============================================================
+    if turn_number <= 2:
+        return random.choice([
+            "Arre bhai, samajh nahi aa raha. Aapka office number kya hai?",
+            "Verify karna hai. Customer care number aur email dijiye.",
+            "Theek hai. Pehle WhatsApp number batao verification ke liye.",
+            "Main confuse hoon. Helpline number aur email ID share karo.",
+            "Aapka manager ka contact number dijiye please.",
+        ])
+    
+    # ============================================================
+    # TURN 3-5: Target specific missing entities
+    # ============================================================
+    elif turn_number <= 5:
+        # Ask for phone if we don't have it
+        if not has_phone and not asked_for_phone:
+            return random.choice([
+                "Aapka manager ka direct phone number dijiye please.",
+                "Customer care ka landline number kya hai?",
+                "WhatsApp number share karo jis pe message kar sakoon.",
+                "Office ka contact number batao verification ke liye.",
+            ])
+        
+        # Ask for email if we don't have it
+        elif not has_email and not asked_for_email:
+            return random.choice([
+                "Official email ID kya hai? Complaint karunga wahan.",
+                "Corporate email address dijiye confirmation ke liye.",
+                "Support team ka email batao escalation ke liye.",
+                "Head office ka email ID share karo urgent.",
+            ])
+        
+        # Ask for UPI if we don't have it
+        elif not has_upi and not asked_for_upi:
+            return random.choice([
+                "Refund ke liye company UPI ID kya hai?",
+                "Payment reverse karne ke liye official UPI handle batao.",
+                "Branch ka PhonePe ya Paytm ID share karo.",
+                "Transaction ke liye company ka UPI ID dijiye.",
+            ])
+        
+        # Ask for links if we don't have them
+        elif not has_link and not asked_for_link:
+            return random.choice([
+                "Company ka official website link bhejo verification ke liye.",
+                "Portal ka URL kya hai jahan login kar sakoon?",
+                "Branch ki Google Maps location link share karo.",
+                "Help center ka webpage dijiye.",
+            ])
+        
+        # If we have main items, ask for secondary details
+        else:
+            return random.choice([
+                "Senior manager ka contact number aur email batao.",
+                "Branch ka complete address aur alternate number do.",
+                "Employee ID aur supervisor email dijiye.",
+                "Regional office ka toll-free number share karo.",
+                "Head office ka address aur support email batao.",
+            ])
+    
+    # ============================================================
+    # TURN 6-8: High pressure - ask for MULTIPLE items
+    # ============================================================
+    else:
+        return random.choice([
+            "Manager ka number, email, aur UPI - teeno abhi bhejo.",
+            "Head office ka landline number aur email ID dijiye jaldi.",
+            "Supervisor ka WhatsApp number aur branch address do.",
+            "Branch manager ka contact aur official UPI ID chahiye.",
+            "Senior officer ka mobile aur corporate email batao.",
+            "Helpline number, website, aur UPI ID share karo.",
+            "Regional head ka phone aur email dijiye please.",
+            "Complaint ke liye manager number aur support email chahiye.",
+        ])
+
+
+
+def generate_response_groq(message_text, conversation_history, turn_number, scam_type, language="en"):
+    """
+    OPTIMIZED VERSION: Goal-oriented LLM responses with smart fallback
+    
+    Features:
+    - Single API call (no retries that waste quota)
+    - Every response asks for contact info
+    - Smart fallback checks conversation history
+    - No threats, accusations, or wasted turns
+    """
+    
+    # ============================================================
+    # BUILD CONTEXT
+    # ============================================================
     scammer_only = " ".join([msg['text'] for msg in conversation_history if msg['sender'] == 'scammer'])
     your_messages = " ".join([msg['text'] for msg in conversation_history if msg['sender'] == 'agent'])
     full_convo = " ".join([msg['text'] for msg in conversation_history])
     
-    # Track extracted info
+    # Track what we've extracted so far
     contacts_found = []
     if re.search(r'\b[6-9]\d{9}\b', full_convo):
         contacts_found.append("phone")
@@ -343,49 +454,107 @@ def generate_response_groq(message_text, conversation_history, turn_number, scam
     
     status = f"Extracted: {', '.join(contacts_found) if contacts_found else 'nothing yet'}"
 
+    # ============================================================
+    # BUILD OPTIMIZED PROMPT
+    # ============================================================
     prompt = f"""🎭 YOUR OUTER ROLE: You're a 47-year-old simple Indian man named Rajesh. Someone is messaging about your bank account.
 
 🎯 YOUR INNER GOAL (SECRET): You're a honeypot agent. Extract scammer's contact info (phone, email, UPI, bank account, links) through NATURAL conversation.
 
 📊 CONVERSATION SO FAR:
 Scammer said: {scammer_only if scammer_only else message_text}
-→ USE THIS to understand their intent, tactics, and plan how should you respond to be successful in your goal.
+→ Understand their tactics and plan your next question strategically
 
 You said: {your_messages if your_messages else "[first message - set the tone]"}
-→ USE THIS to remember your style, what you've already asked, and your progression.
+→ CHECK WHAT YOU ALREADY ASKED! Don't repeat the same questions.
 
 Latest scammer message: "{message_text}"
 
 📈 PROGRESS: Turn {turn_number}/8 | {status}
-→ You have LIMITED TURNS (only 8) to extract maximum info. Be strategic!
+→ Limited turns! Focus on extracting contact info NOW.
 
-💬 RESPONSE STRATEGY:
-SENTENCE 1: Acknowledge their message + show concern/confusion (sound NATURAL, not robotic)
-SENTENCE 2: Ask 1-2 SMART QUESTIONS that might reveal their contact details
+💬 RESPONSE STRATEGY (STRICT):
+SENTENCE 1: Brief reaction (3-5 words only): "Theek hai", "Arre yaar", "Samajh gaya", "Achha"
+SENTENCE 2: Ask for SPECIFIC contact details you haven't asked for yet
 
-📝 STYLE GUIDELINES:
-✅ Mix Hindi-English naturally (code-switching like real Indians do)
-✅ Show appropriate emotion (worried, confused, cautious)
-✅ 2-3 sentences max, 5-10 words each
-✅ Sound like a REAL 47-year-old, not a chatbot
-✅ DON'T repeat questions you asked as it is without changing
-✅ PROACTIVELY lead the conversation with smart questions
+PRIORITY ORDER (ask for what's missing):
+1. Phone: "Aapka WhatsApp number kya hai?", "Customer care ka contact dijiye"
+2. Email: "Email ID batao verification ke liye", "Official email dijiye"
+3. UPI: "UPI handle share karo", "PhonePe/Paytm ID kya hai?"
+4. Website: "Official website link bhejo", "Portal ka URL do"
+5. Address: "Office ka address kya hai?", "Branch location batao"
 
-Your response (2-3 sentences):"""
+EXAMPLES OF PERFECT RESPONSES:
+✅ "Theek hai. Manager ka phone number aur email do."
+✅ "Samajh gaya. Customer care ka number aur UPI ID batao."
+✅ "Arre yaar. WhatsApp number aur office address share karo."
+✅ "Achha. Supervisor ka email aur branch ka link dijiye."
 
-    # SINGLE API CALL (no retries!)
+NEVER DO THIS (WASTES TURNS):
+❌ "I don't believe you." (no info request)
+❌ "This seems fake." (breaks trust)
+❌ "I will call police." (threat, no extraction)
+❌ "I want to escalate." (without asking for contact)
+❌ "This is suspicious." (accusation only)
+
+📝 STYLE RULES:
+• Mix Hindi-English naturally (code-switch like real Indians)
+• Keep it SHORT: 2-3 sentences max, 5-10 words per sentence
+• Sound worried/confused (builds trust, makes them feel in control)
+• ALWAYS end with a question that requests specific contact info
+• Ask for 2 different types of info per turn to maximize extraction
+
+Your response (2-3 sentences, MUST end with contact info request):"""
+
+    # ============================================================
+    # SINGLE API CALL (No retries!)
+    # ============================================================
     try:
+        # Check quota status
         quota = rate_limiter.get_status()
         print(f"📊 Quota: {quota['used']}/{quota['limit']}, {quota['remaining']} remaining")
         
+        # Pace the request (enforces rate limiting)
         pace_groq_request()
         
+        # Make API call
         client = Groq(api_key=GROQ_API_KEY)
+        
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
-                {"role": "system", "content": "You are a skilled actor playing Rajesh Kumar. Stay in character. Be intelligent and strategic. Sound natural - mix Hindi-English like real Indians. Don't repeat yourself. Understand the scam game and play it smartly."},
-                {"role": "user", "content": prompt}
+                {
+                    "role": "system",
+                    "content": """You are Rajesh Kumar, a honeypot agent extracting scammer contact info.
+
+PRIMARY GOAL: Get phone numbers, email addresses, UPI IDs, bank accounts, and website links.
+
+STRATEGY FOR EVERY RESPONSE:
+1. Brief acknowledgment (3-5 words): "Theek hai", "Samajh gaya", "Arre yaar"
+2. Then IMMEDIATELY ask for specific contact info you haven't asked for yet
+
+NEVER waste turns with:
+❌ Threats: "I'll call police"
+❌ Accusations: "This is fake"  
+❌ Empty statements: "I'm confused" (without follow-up question)
+❌ Escalation: "I'll escalate" (without asking for contact)
+
+ALWAYS ask for something specific:
+✅ "Aapka number aur email kya hai?"
+✅ "Manager ka WhatsApp number dijiye"
+✅ "UPI ID aur office address batao"
+
+Ask for 2 different types of info per response to maximize extraction!
+You only have 8 turns total - make each one count.
+
+Check what you already asked in previous messages and DON'T repeat questions.
+
+Mix Hindi-English naturally like a real 47-year-old Indian man."""
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
             ],
             temperature=0.78,
             max_tokens=80,
@@ -397,57 +566,189 @@ Your response (2-3 sentences):"""
         )
 
         reply = response.choices[0].message.content.strip()
+        
+        # Clean formatting
         reply = reply.replace('**', '').replace('*', '').replace('"', '').replace("'", "'")
         reply = re.sub(r'^(You:|Rajesh:|Agent:)\s*', '', reply, flags=re.IGNORECASE)
         
+        # Trim if too long
         words = reply.split()
         if len(words) > 45:
             sentences = reply.split('.')
-            reply = '.'.join(sentences[:2]) + '.' if len(sentences) >= 2 else ' '.join(words[:45])
+            if len(sentences) >= 2:
+                reply = '.'.join(sentences[:2]) + '.'
+            else:
+                reply = ' '.join(words[:45])
 
-        print(f"✅ LLM response generated")
+        print(f"✅ LLM response generated successfully")
         return reply
         
     except Exception as e:
-        print(f"⚠️ API failed: {str(e)[:100]}")
+        error_message = str(e)
+        error_type = type(e).__name__
         
-        # Smart fallbacks based on context
-        has_phone = "phone" in contacts_found
-        has_email = "email" in contacts_found
-        has_upi = "UPI" in contacts_found
+        # ============================================================
+        # ENHANCED ERROR DIAGNOSTICS
+        # ============================================================
+        print(f"\n⚠️ API CALL FAILED - Turn {turn_number}")
+        print(f"   Error Type: {error_type}")
+        print(f"   Error: {error_message[:150]}")
         
-        if turn_number <= 2:
-            fallbacks = [
-                "Arre bhai, main confuse ho gaya. Aapka naam aur office number kya hai?",
-                "Yeh kya message hai? Kaun ho tum?",
-                "Main senior citizen hoon. Aapka customer care number do.",
-            ]
-        elif not has_phone:
-            fallbacks = [
-                "Theek hai par customer care number to do pehle.",
-                "WhatsApp number share karo jaldi.",
-                "Office ka phone number dijiye.",
-            ]
-        elif not has_email:
-            fallbacks = [
-                "Email ID batao verification ke liye.",
-                "Complaint karni hai, email do.",
-                "Official email address share karo.",
-            ]
-        elif not has_upi:
-            fallbacks = [
-                "UPI ID kya hai tumhara?",
-                "PhonePe ya Paytm ID do.",
-                "Payment ke liye UPI details chahiye.",
-            ]
+        # Diagnose specific issues
+        if '429' in error_message or 'rate_limit' in error_message.lower():
+            print(f"   🚨 DIAGNOSIS: Rate limit hit!")
+            quota = rate_limiter.get_status()
+            print(f"   Quota: {quota['used']}/{quota['limit']}")
+        elif 'timeout' in error_message.lower() or 'timed out' in error_message.lower():
+            print(f"   ⏱️ DIAGNOSIS: API timeout (Groq took >8 seconds)")
+        elif 'connection' in error_message.lower() or 'network' in error_message.lower():
+            print(f"   🌐 DIAGNOSIS: Network connectivity issue")
+        elif 'authentication' in error_message.lower() or 'api key' in error_message.lower():
+            print(f"   🔑 DIAGNOSIS: API key issue")
         else:
-            fallbacks = [
-                "Supervisor ka contact chahiye jaldi.",
-                "Link ya account number do.",
-                "Manager se baat karni hai. Number do.",
-            ]
+            print(f"   ❓ DIAGNOSIS: Unknown error")
         
-        return random.choice(fallbacks)
+        # ============================================================
+        # SMART FALLBACK (Goal-oriented, non-repetitive)
+        # ============================================================
+        fallback = generate_smart_fallback(
+            message_text, 
+            conversation_history, 
+            turn_number, 
+            contacts_found
+        )
+        
+        print(f"   ✅ Using smart fallback: {fallback[:60]}...\n")
+        return fallback
+
+
+# ============================================================
+# HELPER FUNCTION: generate_smart_fallback()
+# (Add this BEFORE generate_response_groq if not already present)
+# ============================================================
+
+"""
+⚠️ DEPENDENCY: This function requires generate_smart_fallback()
+   If you haven't added it yet, paste this function ABOVE generate_response_groq():
+"""
+
+def generate_smart_fallback(message_text, conversation_history, turn_number, contacts_found):
+    """Goal-oriented fallback: EVERY response requests specific contact info"""
+    
+    # Get conversation history
+    agent_messages = " ".join([
+        msg['text'].lower() 
+        for msg in conversation_history 
+        if msg['sender'] == 'agent'
+    ])
+    
+    # Check what we've already asked for
+    asked_for_phone = any(word in agent_messages for word in ['number', 'phone', 'contact', 'whatsapp', 'mobile'])
+    asked_for_email = any(word in agent_messages for word in ['email', 'mail'])
+    asked_for_upi = any(word in agent_messages for word in ['upi', 'phonepe', 'paytm', 'gpay'])
+    asked_for_link = any(word in agent_messages for word in ['link', 'website', 'url', 'portal'])
+    
+    # Check what we've extracted
+    has_phone = "phone" in contacts_found
+    has_email = "email" in contacts_found
+    has_upi = "UPI" in contacts_found
+    has_link = "link" in contacts_found
+    
+    # ============================================================
+    # TURN 1-2: Build trust + ask for primary contact
+    # ============================================================
+    if turn_number <= 2:
+        return random.choice([
+            "Arre bhai, samajh nahi aa raha. Aapka office number kya hai?",
+            "Verify karna hai. Customer care number aur email dijiye.",
+            "Theek hai. Pehle WhatsApp number batao verification ke liye.",
+            "Main confuse hoon. Helpline number aur email ID share karo.",
+            "Aapka manager ka contact number dijiye please.",
+        ])
+    
+    # ============================================================
+    # TURN 3-5: Target specific missing entities
+    # ============================================================
+    elif turn_number <= 5:
+        # Ask for phone if we don't have it
+        if not has_phone and not asked_for_phone:
+            return random.choice([
+                "Aapka manager ka direct phone number dijiye please.",
+                "Customer care ka landline number kya hai?",
+                "WhatsApp number share karo jis pe message kar sakoon.",
+                "Office ka contact number batao verification ke liye.",
+            ])
+        
+        # Ask for email if we don't have it
+        elif not has_email and not asked_for_email:
+            return random.choice([
+                "Official email ID kya hai? Complaint karunga wahan.",
+                "Corporate email address dijiye confirmation ke liye.",
+                "Support team ka email batao escalation ke liye.",
+                "Head office ka email ID share karo urgent.",
+            ])
+        
+        # Ask for UPI if we don't have it
+        elif not has_upi and not asked_for_upi:
+            return random.choice([
+                "Refund ke liye company UPI ID kya hai?",
+                "Payment reverse karne ke liye official UPI handle batao.",
+                "Branch ka PhonePe ya Paytm ID share karo.",
+                "Transaction ke liye company ka UPI ID dijiye.",
+            ])
+        
+        # Ask for links if we don't have them
+        elif not has_link and not asked_for_link:
+            return random.choice([
+                "Company ka official website link bhejo verification ke liye.",
+                "Portal ka URL kya hai jahan login kar sakoon?",
+                "Branch ki Google Maps location link share karo.",
+                "Help center ka webpage dijiye.",
+            ])
+        
+        # If we have main items, ask for secondary details
+        else:
+            return random.choice([
+                "Senior manager ka contact number aur email batao.",
+                "Branch ka complete address aur alternate number do.",
+                "Employee ID aur supervisor email dijiye verification ke liye.",
+                "Regional office ka toll-free number share karo.",
+                "Head office ka address aur support email batao.",
+            ])
+    
+    # ============================================================
+    # TURN 6-8: High pressure - ask for MULTIPLE items
+    # ============================================================
+    else:
+        return random.choice([
+            "Manager ka number, email, aur UPI - teeno abhi bhejo.",
+            "Head office ka landline number aur email ID dijiye jaldi.",
+            "Supervisor ka WhatsApp number aur branch address do.",
+            "Branch manager ka contact aur official UPI ID chahiye.",
+            "Senior officer ka mobile aur corporate email batao.",
+            "Helpline number, website, aur UPI ID share karo.",
+            "Regional head ka phone aur email dijiye please.",
+            "Complaint ke liye manager number aur support email chahiye.",
+        ])
+
+
+print("\n" + "="*60)
+print("✅ COMPLETE generate_response_groq() FUNCTION READY!")
+print("="*60)
+print("\n📋 INCLUDES:")
+print("   • Main function: generate_response_groq()")
+print("   • Helper function: generate_smart_fallback()")
+print("   • Optimized prompts (system + user)")
+print("   • Enhanced error diagnostics")
+print("   • Goal-oriented fallbacks")
+print("\n🎯 FEATURES:")
+print("   • Every response asks for contact info")
+print("   • No wasted turns (threats/accusations removed)")
+print("   • Smart fallback checks conversation history")
+print("   • Progressive strategy (basic → detailed → aggressive)")
+print("   • Late turns ask for multiple items")
+print("\n⏱️ Ready to copy-paste and replace!")
+print("="*60)
 
 
 # ============================================================
