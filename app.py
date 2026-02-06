@@ -20,37 +20,63 @@ from flask import Flask, request, jsonify
 from groq import Groq
 
 # ============================================================
-# REQUEST VELOCITY CONTROL (Prevents burst-based throttling)
+# REQUEST VELOCITY CONTROL (Smart Rate Limiting - FIXED)
 # ============================================================
 
 import time
 from threading import Lock
+from collections import deque
 
-_request_pacer_lock = Lock()
-_last_groq_request_time = 0
-MIN_REQUEST_INTERVAL = 5  # Minimum 2 seconds between ANY Groq requests
+class RateLimitTracker:
+    def __init__(self, rpm_limit=25):
+        self.rpm_limit = rpm_limit
+        self.request_times = deque()
+        self.lock = Lock()
+        self.min_interval = 5
+        self.last_request = 0
+    
+    def wait_if_needed(self):
+        with self.lock:
+            now = time.time()
+            
+            # Minimum interval
+            time_since_last = now - self.last_request
+            if time_since_last < self.min_interval:
+                wait_time = self.min_interval - time_since_last
+                print(f"⏱️  Pacing: {wait_time:.1f}s")
+                time.sleep(wait_time)
+                now = time.time()
+            
+            # Clean old requests
+            while self.request_times and now - self.request_times[0] > 60:
+                self.request_times.popleft()
+            
+            # Rate limit check
+            if len(self.request_times) >= self.rpm_limit:
+                oldest = self.request_times[0]
+                wait_time = 60 - (now - oldest) + 0.5
+                print(f"⏱️  Rate limit: waiting {wait_time:.1f}s")
+                time.sleep(wait_time)
+            
+            self.request_times.append(time.time())
+            self.last_request = time.time()
+    
+    def get_status(self):
+        with self.lock:
+            now = time.time()
+            while self.request_times and now - self.request_times[0] > 60:
+                self.request_times.popleft()
+            used = len(self.request_times)
+            remaining = self.rpm_limit - used
+            return {"used": used, "remaining": remaining, "limit": self.rpm_limit}
+
+rate_limiter = RateLimitTracker(rpm_limit=25)
 
 def pace_groq_request():
-    """
-    Ensures minimum time interval between Groq API requests.
-    This prevents burst-based throttling even when under RPM limit.
-    
-    Groq's 429 is triggered by REQUEST VELOCITY, not just count.
-    """
-    global _last_groq_request_time
-    
-    with _request_pacer_lock:
-        current_time = time.time()
-        time_since_last = current_time - _last_groq_request_time
-        
-        if time_since_last < MIN_REQUEST_INTERVAL:
-            wait_time = MIN_REQUEST_INTERVAL - time_since_last
-            print(f"⏱️  Pacing: waiting {wait_time:.1f}s to prevent burst throttling")
-            time.sleep(wait_time)
-        
-        _last_groq_request_time = time.time()
+    rate_limiter.wait_if_needed()
 
-print("✅ Request velocity pacer initialized (min 2s between requests)")
+print("✅ Advanced rate limiter initialized (25 RPM with buffer)")
+
 
 
 # ============================================================
@@ -295,22 +321,22 @@ def detect_language(message):
 
 
 def generate_response_groq(message_text, conversation_history, turn_number, scam_type, language="en"):
-    """Intelligent conversational agent - FULLY PACED VERSION"""
+    """FIXED: Single API call, no retries, smart fallback"""
     
     # Build context
     scammer_only = " ".join([msg['text'] for msg in conversation_history if msg['sender'] == 'scammer'])
     your_messages = " ".join([msg['text'] for msg in conversation_history if msg['sender'] == 'agent'])
     full_convo = " ".join([msg['text'] for msg in conversation_history])
     
-    # Intelligence tracking
+    # Track extracted info
     contacts_found = []
-    if re.search(r'\b[6-9]\d{9}\b', full_convo):  # ✅ FIXED: Single backslash
+    if re.search(r'\b[6-9]\d{9}\b', full_convo):
         contacts_found.append("phone")
     if re.search(r'@[a-zA-Z0-9-]+\.[a-zA-Z]{2,}', full_convo):
         contacts_found.append("email")
     if re.search(r'@[a-zA-Z0-9_-]+\b', full_convo) and not re.search(r'@[a-zA-Z0-9-]+\.[a-zA-Z]{2,}', full_convo):
         contacts_found.append("UPI")
-    if re.search(r'\b\d{11,18}\b', full_convo):  # ✅ FIXED: Single backslash
+    if re.search(r'\b\d{11,18}\b', full_convo):
         contacts_found.append("bank account")
     if re.search(r'https?://', full_convo):
         contacts_found.append("link")
@@ -323,7 +349,7 @@ def generate_response_groq(message_text, conversation_history, turn_number, scam
 
 📊 CONVERSATION SO FAR:
 Scammer said: {scammer_only if scammer_only else message_text}
-→ USE THIS to understand their intent, tactics, and plan how should you respond to be successfull in your goal.
+→ USE THIS to understand their intent, tactics, and plan how should you respond to be successful in your goal.
 
 You said: {your_messages if your_messages else "[first message - set the tone]"}
 → USE THIS to remember your style, what you've already asked, and your progression.
@@ -335,10 +361,7 @@ Latest scammer message: "{message_text}"
 
 💬 RESPONSE STRATEGY:
 SENTENCE 1: Acknowledge their message + show concern/confusion (sound NATURAL, not robotic)
-   
 SENTENCE 2: Ask 1-2 SMART QUESTIONS that might reveal their contact details
-   - Examples: "Aapka customer care number kya hai?", "Email id bataiye?", "WhatsApp pe baat kar sakte hain?"
-   - You can ask for multiple things: "Can you give me your phone number and email to verify?". Stay focused towards the details we want, and don't ask for irrelevant/extravagant details.
 
 📝 STYLE GUIDELINES:
 ✅ Mix Hindi-English naturally (code-switching like real Indians do)
@@ -350,90 +373,81 @@ SENTENCE 2: Ask 1-2 SMART QUESTIONS that might reveal their contact details
 
 Your response (2-3 sentences):"""
 
-    # ✅ FIXED: Reduced retries to minimize ghost calls
-    max_retries = 2  # Changed from 3 to 2
-    
-    for attempt in range(max_retries):
-        try:
-            # ✅ CRITICAL FIX: Pace EVERY attempt (moved inside loop)
-            pace_groq_request()
-            
-            client = Groq(api_key=GROQ_API_KEY)
-            
-            response = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a skilled actor playing Rajesh Kumar. Stay in character. Be intelligent and strategic. Sound natural - mix Hindi-English like real Indians. Don't repeat yourself. Understand the scam game and play it smartly."
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                temperature=0.78,
-                max_tokens=80,
-                top_p=0.88,
-                frequency_penalty=0.7,
-                presence_penalty=0.6,
-                stop=["\n\n", "Scammer:", "You:", "---"],  # ✅ FIXED: Single backslash
-                timeout=5.0
-            )
+    # SINGLE API CALL (no retries!)
+    try:
+        quota = rate_limiter.get_status()
+        print(f"📊 Quota: {quota['used']}/{quota['limit']}, {quota['remaining']} remaining")
+        
+        pace_groq_request()
+        
+        client = Groq(api_key=GROQ_API_KEY)
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": "You are a skilled actor playing Rajesh Kumar. Stay in character. Be intelligent and strategic. Sound natural - mix Hindi-English like real Indians. Don't repeat yourself. Understand the scam game and play it smartly."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.78,
+            max_tokens=80,
+            top_p=0.88,
+            frequency_penalty=0.7,
+            presence_penalty=0.6,
+            stop=["\n\n", "Scammer:", "You:", "---"],
+            timeout=8.0
+        )
 
-            reply = response.choices[0].message.content.strip()
-            
-            # Clean formatting
-            reply = reply.replace('**', '').replace('*', '').replace('"', '').replace("'", "'")
-            reply = re.sub(r'^(You:|Rajesh:|Agent:)\s*', '', reply, flags=re.IGNORECASE)
-            
-            # Trim if too long
-            words = reply.split()
-            if len(words) > 45:
-                sentences = reply.split('.')
-                if len(sentences) >= 2:
-                    reply = '.'.join(sentences[:2]) + '.'
-                else:
-                    reply = ' '.join(words[:45])
+        reply = response.choices[0].message.content.strip()
+        reply = reply.replace('**', '').replace('*', '').replace('"', '').replace("'", "'")
+        reply = re.sub(r'^(You:|Rajesh:|Agent:)\s*', '', reply, flags=re.IGNORECASE)
+        
+        words = reply.split()
+        if len(words) > 45:
+            sentences = reply.split('.')
+            reply = '.'.join(sentences[:2]) + '.' if len(sentences) >= 2 else ' '.join(words[:45])
 
-            return reply
-            
-        except Exception as e:
-            error_message = str(e)
-            
-            # ✅ ADD DETAILED LOGGING
-            print(f"\n❌ API ERROR on attempt {attempt + 1}/{max_retries}:")
-            print(f"   Error type: {type(e).__name__}")
-            print(f"   Error message: {error_message[:200]}")  # First 200 chars
-            
-            is_rate_limit = '429' in error_message or 'rate_limit' in error_message.lower()
-            
-            if is_rate_limit:
-                print(f"   → Rate limit error detected")
-            
-            if is_rate_limit and attempt < max_retries - 1:
-                print(f"⏳ Will retry with pacing (attempt {attempt + 2}/{max_retries})")
-                continue
-            
-            print(f"⚠️ FINAL FAILURE on attempt {attempt + 1}/{max_retries}")
-            print(f"   Falling back to static response")
-            
-            if attempt == max_retries - 1:
-                import traceback
-                traceback.print_exc()  # Full stack trace
-                
-                contextual_fallbacks = [
-                    "Arre yaar, samajh nahin aa raha. Aapka number aur email id kya hai?",
-                    "Bahut confusion ho rahi hai. WhatsApp pe baat kar sakte hain?",
-                    "Main thoda nervous ho gaya. Aapka customer care number bataiye?",
-                    "Yeh kya chal raha hai? Link ya contact details bhej sakte ho?",
-                    "Wait karo, pehle verify karna hai. Aapka phone number aur email do.",
-                    "Main confirm karna chahta hoon. Koi official link hai?",
-                    "Thoda detail mein samjhao. Aapka WhatsApp number kya hai?",
-                    "Mujhe aapka supervisor se baat karni hai. Unka number do."
-                ]
-                
-                return random.choice(contextual_fallbacks)
+        print(f"✅ LLM response generated")
+        return reply
+        
+    except Exception as e:
+        print(f"⚠️ API failed: {str(e)[:100]}")
+        
+        # Smart fallbacks based on context
+        has_phone = "phone" in contacts_found
+        has_email = "email" in contacts_found
+        has_upi = "UPI" in contacts_found
+        
+        if turn_number <= 2:
+            fallbacks = [
+                "Arre bhai, main confuse ho gaya. Aapka naam aur office number kya hai?",
+                "Yeh kya message hai? Kaun ho tum?",
+                "Main senior citizen hoon. Aapka customer care number do.",
+            ]
+        elif not has_phone:
+            fallbacks = [
+                "Theek hai par customer care number to do pehle.",
+                "WhatsApp number share karo jaldi.",
+                "Office ka phone number dijiye.",
+            ]
+        elif not has_email:
+            fallbacks = [
+                "Email ID batao verification ke liye.",
+                "Complaint karni hai, email do.",
+                "Official email address share karo.",
+            ]
+        elif not has_upi:
+            fallbacks = [
+                "UPI ID kya hai tumhara?",
+                "PhonePe ya Paytm ID do.",
+                "Payment ke liye UPI details chahiye.",
+            ]
+        else:
+            fallbacks = [
+                "Supervisor ka contact chahiye jaldi.",
+                "Link ya account number do.",
+                "Manager se baat karni hai. Number do.",
+            ]
+        
+        return random.choice(fallbacks)
 
 
 # ============================================================
@@ -1122,6 +1136,24 @@ def health():
         "timestamp": int(time.time() * 1000),
         "sessions": len(session_manager.get_all_sessions())
     }), 200
+
+@app.route('/quota', methods=['GET'])
+def quota_status():
+    """Check API quota usage - useful for debugging"""
+    try:
+        status = rate_limiter.get_status()
+        return jsonify({
+            "status": "success",
+            "quota": {
+                "used": status["used"],
+                "remaining": status["remaining"],
+                "limit": status["limit"],
+                "percentage": f"{(status['used']/status['limit']*100):.1f}%"
+            },
+            "timestamp": int(time.time() * 1000)
+        }), 200
+    except Exception as e:
+        return jsonify({"status": "error", "error": str(e)}), 500
 
 
 @app.route('/session/<session_id>', methods=['GET'])
