@@ -1,4 +1,17 @@
 # ============================================================
+# VERSION: V4_FORCED_SPACING_WITH_DEBUG
+# Last Updated: 2026-02-06 10:00 AM IST
+# ============================================================
+
+print("\n" + "="*80)
+print("🚀 HONEYPOT SCAM DETECTION SYSTEM V4")
+print("   Version: V4_FORCED_SPACING_WITH_DEBUG")
+print("   Updated: 2026-02-06 10:00 AM IST")
+print("="*80 + "\n")
+
+
+
+# ============================================================
 # BLOCK 1: ENVIRONMENT SETUP WITH GROQ
 # ============================================================
 
@@ -28,44 +41,72 @@ from threading import Lock
 from collections import deque
 
 class RateLimitTracker:
-    def __init__(self, rpm_limit=20):  # Reduced from 25 for safety
+    def __init__(self, rpm_limit=20):
+        print("="*80)
+        print("🔥🔥🔥 INITIALIZING NEW RATE LIMITER V4 🔥🔥🔥")
+        print("="*80)
         self.rpm_limit = rpm_limit
         self.request_times = deque()
         self.lock = Lock()
-        self.min_interval = 3.5  # ✅ CRITICAL: Minimum 3.5s between API calls
-        self.last_request = 0    # ✅ Track last request time
+        self.min_interval = 3.5
+        self.last_request = 0
+        print(f"🔥 Configuration:")
+        print(f"   RPM Limit: {self.rpm_limit}")
+        print(f"   Min Interval: {self.min_interval}s")
+        print(f"   Version: V4_WITH_FORCED_SPACING")
+        print("="*80)
     
     def wait_if_needed(self):
+        print(f"\n{'='*80}")
+        print(f"🔥🔥🔥 WAIT_IF_NEEDED CALLED 🔥🔥🔥")
+        print(f"{'='*80}")
+        
         with self.lock:
             now = time.time()
+            print(f"🔥 Current time: {now}")
+            print(f"🔥 Last request time: {self.last_request}")
             
-            # ✅ ENFORCE MINIMUM INTERVAL (Prevents burst throttling)
+            # ENFORCE MINIMUM INTERVAL
             if self.last_request > 0:
                 time_since_last = now - self.last_request
+                print(f"🔥 Time since last request: {time_since_last:.2f}s")
+                print(f"🔥 Min interval required: {self.min_interval}s")
+                
                 if time_since_last < self.min_interval:
                     wait_time = self.min_interval - time_since_last
-                    print(f"⏱️  Min interval: waiting {wait_time:.1f}s (last request was {time_since_last:.1f}s ago)")
+                    print(f"🔥🔥🔥 NEED TO WAIT: {wait_time:.2f}s 🔥🔥🔥")
+                    print(f"🔥🔥🔥 SLEEPING NOW... 🔥🔥🔥")
                     time.sleep(wait_time)
-                    now = time.time()
+                    print(f"🔥🔥🔥 SLEEP COMPLETE! 🔥🔥🔥")
+                else:
+                    print(f"🔥 ✅ No wait needed (already {time_since_last:.2f}s since last)")
+            else:
+                print(f"🔥 First request ever - no wait needed")
             
-            # Clean old requests (older than 60 seconds)
+            # Clean old requests
+            old_count = len(self.request_times)
             while self.request_times and now - self.request_times[0] > 60:
                 self.request_times.popleft()
+            cleaned = old_count - len(self.request_times)
+            if cleaned > 0:
+                print(f"🔥 Cleaned {cleaned} old requests from queue")
             
             # RPM limit check
             if len(self.request_times) >= self.rpm_limit:
                 oldest = self.request_times[0]
-                wait_time = 60 - (now - oldest) + 1.0  # +1s buffer
-                print(f"⏱️  RPM limit: waiting {wait_time:.1f}s")
+                wait_time = 60 - (now - oldest) + 1.0
+                print(f"🔥🔥🔥 RPM LIMIT HIT: waiting {wait_time:.1f}s 🔥🔥🔥")
                 time.sleep(wait_time)
-                now = time.time()
+                print(f"🔥🔥🔥 RPM WAIT COMPLETE 🔥🔥🔥")
             
-            # Record this request
+            # Record request
             self.request_times.append(time.time())
-            self.last_request = time.time()  # ✅ Update last request time
+            self.last_request = time.time()
             
-            # Log current state
-            print(f"📊 Rate limiter: {len(self.request_times)}/{self.rpm_limit} used in last 60s")
+            print(f"🔥 Request recorded!")
+            print(f"🔥 Queue size: {len(self.request_times)}/{self.rpm_limit}")
+            print(f"🔥 Last request timestamp updated to: {self.last_request}")
+            print(f"{'='*80}\n")
     
     def get_status(self):
         with self.lock:
@@ -74,17 +115,27 @@ class RateLimitTracker:
                 self.request_times.popleft()
             used = len(self.request_times)
             remaining = self.rpm_limit - used
-            
-            # Calculate time since last request
             time_since_last = now - self.last_request if self.last_request > 0 else 999
-            
             return {
                 "used": used,
                 "remaining": remaining,
                 "limit": self.rpm_limit,
-                "time_since_last_request": f"{time_since_last:.1f}s",
-                "ready_in": f"{max(0, self.min_interval - time_since_last):.1f}s"
+                "time_since_last": f"{time_since_last:.1f}s",
+                "ready_in": f"{max(0, self.min_interval - time_since_last):.1f}s",
+                "version": "V4_WITH_FORCED_SPACING"
             }
+
+rate_limiter = RateLimitTracker(rpm_limit=20)
+
+def pace_groq_request():
+    print("🔥 Calling pace_groq_request()...")
+    rate_limiter.wait_if_needed()
+    print("🔥 pace_groq_request() complete!\n")
+
+print("\n" + "="*80)
+print("✅ Rate Limiter V4 Initialized (20 RPM, 3.5s min interval)")
+print("="*80 + "\n")
+
 
 # Initialize with safer limit
 rate_limiter = RateLimitTracker(rpm_limit=20)
