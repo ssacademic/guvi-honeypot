@@ -32,6 +32,8 @@ from flask import Flask, request, jsonify
 
 from groq import Groq
 
+
+
 # ============================================================
 # REQUEST VELOCITY CONTROL (Smart Rate Limiting - FIXED)
 # ============================================================
@@ -125,6 +127,7 @@ class RateLimitTracker:
                 "version": "V4_WITH_FORCED_SPACING"
             }
 
+# ✅ CREATE ONLY ONE INSTANCE
 rate_limiter = RateLimitTracker(rpm_limit=20)
 
 def pace_groq_request():
@@ -137,21 +140,6 @@ print("✅ Rate Limiter V4 Initialized (20 RPM, 3.5s min interval)")
 print("="*80 + "\n")
 
 
-# Initialize with safer limit
-rate_limiter = RateLimitTracker(rpm_limit=20)
-
-def pace_groq_request():
-    rate_limiter.wait_if_needed()
-
-print("✅ Advanced rate limiter initialized (20 RPM, 3.5s min interval)")
-
-
-rate_limiter = RateLimitTracker(rpm_limit=25)
-
-def pace_groq_request():
-    rate_limiter.wait_if_needed()
-
-print("✅ Advanced rate limiter initialized (25 RPM with buffer)")
 
 
 
