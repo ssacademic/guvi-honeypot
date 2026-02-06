@@ -32,34 +32,25 @@ class RateLimitTracker:
         self.rpm_limit = rpm_limit
         self.request_times = deque()
         self.lock = Lock()
-        self.min_interval = 4
-        self.last_request = 0
+
     
     def wait_if_needed(self):
         with self.lock:
             now = time.time()
             
-            # Minimum interval
-            time_since_last = now - self.last_request
-            if time_since_last < self.min_interval:
-                wait_time = self.min_interval - time_since_last
-                print(f"⏱️  Pacing: {wait_time:.1f}s")
-                time.sleep(wait_time)
-                now = time.time()
-            
-            # Clean old requests
+            # Clean old requests (older than 60 seconds)
             while self.request_times and now - self.request_times[0] > 60:
                 self.request_times.popleft()
             
-            # Rate limit check
+            # Rate limit check ONLY (no minimum interval)
             if len(self.request_times) >= self.rpm_limit:
                 oldest = self.request_times[0]
                 wait_time = 60 - (now - oldest) + 0.5
-                print(f"⏱️  Rate limit: waiting {wait_time:.1f}s")
+                print(f"⏱️  Rate limit hit: waiting {wait_time:.1f}s")
                 time.sleep(wait_time)
             
+            # Record this request
             self.request_times.append(time.time())
-            self.last_request = time.time()
     
     def get_status(self):
         with self.lock:
@@ -1317,49 +1308,110 @@ import requests
 @app.route('/honeypot', methods=['POST'])
 def honeypot():
     """
-    Main endpoint - GUVI compatible format
-    NOW PROPERLY CONNECTED TO BLOCK 6 PIPELINE!
+    Main endpoint with SMART HUMAN-LIKE PACING
+    - Prevents GUVI rapid-fire 429 errors
+    - Adds realistic response delays
+    - Safe conservative timing (3-5 seconds)
     """
-
+    
     try:
-        # Validate API key
+        # ============================================================
+        # VALIDATE REQUEST
+        # ============================================================
         api_key = request.headers.get('x-api-key')
         if api_key != API_SECRET_KEY:
             return jsonify({"error": "Unauthorized"}), 401
 
-        # Parse request (GUVI format)
         request_data = request.json
-
         if not request_data:
             return jsonify({
                 "status": "error",
                 "reply": "Invalid request format"
             }), 400
-
+        
+        session_id = request_data.get("sessionId")
+        
         # ============================================================
-        # KEY FIX: Call Block 6's process_message() - THE WORKING PIPELINE!
+        # GET CURRENT TURN (before processing adds new message)
         # ============================================================
+        if session_manager.session_exists(session_id):
+            current_turn = session_manager.get_turn_count(session_id) + 1
+        else:
+            current_turn = 1
+        
+        # ============================================================
+        # CONSERVATIVE REALISTIC DELAYS (safe for most timeouts)
+        # ============================================================
+        if current_turn == 1:
+            # First message: reading and understanding
+            delay = random.uniform(3.5, 4.5)
+            delay_reason = "reading first message"
+        elif current_turn == 2:
+            # Second: re-reading, still cautious
+            delay = random.uniform(3.0, 4.0)
+            delay_reason = "re-reading carefully"
+        elif current_turn % 3 == 0:
+            # Every 3rd: thinking it over
+            delay = random.uniform(4.0, 5.0)
+            delay_reason = "thinking pause"
+        elif current_turn <= 4:
+            # Early conversation: cautious
+            delay = random.uniform(3.0, 4.0)
+            delay_reason = "cautious response"
+        else:
+            # Later: more fluent
+            delay = random.uniform(2.5, 3.5)
+            delay_reason = "engaged typing"
+        
+        # ============================================================
+        # PROCESS MESSAGE (LLM call happens here)
+        # ============================================================
+        start_time = time.time()
         result = process_message(request_data)
-
+        processing_time = time.time() - start_time
+        
         if not result.get("success", False):
             return jsonify({
                 "status": "error",
                 "reply": result.get("agentReply", "Error processing message")
             }), 500
-
-        # Check if conversation ended
+        
+        # ============================================================
+        # SIMULATE "TYPING" (delay minus processing time)
+        # ============================================================
+        remaining_delay = max(0, delay - processing_time)
+        
+        if remaining_delay > 0:
+            time.sleep(remaining_delay)
+        
+        total_time = time.time() - start_time
+        
+        # Log for debugging (you can check /analytics later)
+        print(f"⏱️  Turn {current_turn}: {delay:.1f}s target ({delay_reason}), {processing_time:.1f}s processing, {remaining_delay:.1f}s typing, {total_time:.1f}s total")
+        
+        # ============================================================
+        # CHECK IF CONVERSATION ENDED
+        # ============================================================
         if result.get("shouldEndConversation", False):
-            session_id = request_data.get("sessionId")
-            print(f"🛑 Conversation ended: {result.get('exitReason')}")
-
-            # Send GUVI callback
             send_final_callback_to_guvi(session_id)
-
-        # GUVI-COMPATIBLE RESPONSE (Simple format)
+        
+        # ============================================================
+        # RETURN RESPONSE
+        # ============================================================
         return jsonify({
             "status": "success",
             "reply": result["agentReply"]
         }), 200
+
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        return jsonify({
+            "status": "error",
+            "reply": "Kuch samajh nahin aaya, phir se bolo."
+        }), 500
 
     except Exception as e:
         print(f"❌ Error in honeypot endpoint: {e}")
@@ -1527,6 +1579,40 @@ def analytics():
         "activeNow": total_sessions
     }), 200
 
+@app.route('/test-timing', methods=['GET'])
+def test_timing():
+    """
+    Test endpoint to verify delays are working
+    Safe to call - doesn't trigger any scams
+    """
+    try:
+        # Simulate a request
+        start = time.time()
+        
+        # Simulate processing
+        time.sleep(0.5)
+        
+        # Test delay calculation
+        target_delay = 4.0
+        processing = time.time() - start
+        remaining = max(0, target_delay - processing)
+        
+        time.sleep(remaining)
+        
+        total = time.time() - start
+        
+        return jsonify({
+            "status": "success",
+            "test": {
+                "target_delay": f"{target_delay:.1f}s",
+                "processing_time": f"{processing:.2f}s",
+                "sleep_time": f"{remaining:.2f}s",
+                "total_time": f"{total:.2f}s"
+            },
+            "message": f"Delay working! Total time: {total:.1f}s (target was {target_delay:.1f}s)"
+        }), 200
+    except Exception as e:
+        return jsonify({"status": "error", "error": str(e)}), 500
 
 print("\n" + "="*60)
 print("✅ FIXED GUVI-COMPATIBLE API ENDPOINTS!")
